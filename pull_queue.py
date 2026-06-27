@@ -189,7 +189,6 @@ def main():
         if time.time() - start_time > MAX_RUNTIME_SECONDS:
             logger.warning("Max runtime reached. Shutting down.")
             shutdown_self()
-            break
 
         try:
             logger.debug("Polling queue...")
@@ -212,7 +211,6 @@ def main():
                 if idle_for >= IDLE_LIMIT_SECONDS:
                     logger.warning("Idle limit reached. Shutting down EC2...")
                     shutdown_self()
-                    break
 
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
@@ -257,7 +255,6 @@ def main():
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 logger.error("Too many failures. Shutting down.")
                 shutdown_self()
-                break
 
             time.sleep(backoff)
 
