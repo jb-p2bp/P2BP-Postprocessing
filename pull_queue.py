@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 # CONFIG
 # =========================
 
+load_dotenv()
+
 IDLE_LIMIT_SECONDS = int(os.getenv("IDLE_LIMIT_SECONDS", "60"))
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "15"))
 MAX_CONSECUTIVE_FAILURES = int(os.getenv("MAX_CONSECUTIVE_FAILURES", "10"))
@@ -163,8 +165,6 @@ def ack_message(client, queue_id, account_id, lease_id: str) -> None:
 # =========================
 
 def main():
-    load_dotenv()
-
     account_id = require_env("CLOUDFLARE_ACCOUNT_ID")
     queue_id = require_env("CLOUDFLARE_QUEUE_ID")
     api_token = require_env("CLOUDFLARE_API_TOKEN")
@@ -201,9 +201,9 @@ def main():
             )
 
             messages = getattr(pull_response, "messages", [])
-            consecutive_failures = 0
 
             if not messages:
+                consecutive_failures = 0
                 idle_for = time.time() - last_successful_ack_time
 
                 logger.info(f"No messages. Idle since last work: {idle_for:.0f}s")
@@ -237,6 +237,7 @@ def main():
             logger.info("Message acknowledged.")
 
             last_successful_ack_time = time.time()
+            consecutive_failures = 0
 
         except Exception as e:
             consecutive_failures += 1
