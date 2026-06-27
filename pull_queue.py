@@ -5,6 +5,7 @@ import time
 import signal
 import random
 import logging
+import subprocess
 from typing import Any, Optional
 
 import boto3
@@ -24,6 +25,7 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "15"))
 MAX_CONSECUTIVE_FAILURES = int(os.getenv("MAX_CONSECUTIVE_FAILURES", "10"))
 MAX_BACKOFF_SECONDS = int(os.getenv("MAX_BACKOFF_SECONDS", "300"))
 MAX_RUNTIME_SECONDS = int(os.getenv("MAX_RUNTIME_SECONDS", "43200"))  # 12h default
+SHUTDOWN_RETRY_SECONDS = int(os.getenv("SHUTDOWN_RETRY_SECONDS", "30"))
 
 running = True
 
@@ -113,32 +115,51 @@ def get_instance_id(max_attempts: int = 3) -> Optional[str]:
     return None
 
 
-def shutdown_self():
-    instance_id = get_instance_id()
+def power_off_os() -> None:
+    subprocess.run(
+        ["sudo", "-n", "systemctl", "poweroff"],
+        check=True,
+        timeout=10,
+    )
 
-    if not instance_id:
-        raise RuntimeError(
-            "Unable to determine EC2 instance ID; instance was not stopped"
+
+def ensure_shutdown(reason: str) -> None:
+    logger.critical(f"Entering shutdown mode: {reason}")
+
+    while True:
+        try:
+            instance_id = get_instance_id()
+            if not instance_id:
+                raise RuntimeError("Unable to determine EC2 instance ID")
+
+            region = os.getenv("AWS_REGION")
+            if not region:
+                raise RuntimeError("Missing required environment variable: AWS_REGION")
+
+            logger.warning(f"Stopping EC2 instance {instance_id} via EC2 API...")
+
+            ec2 = boto3.client("ec2", region_name=region)
+            ec2.stop_instances(InstanceIds=[instance_id])
+
+            logger.warning("EC2 stop request sent successfully.")
+            sys.exit(0)
+
+        except Exception:
+            logger.exception("EC2 API shutdown failed")
+
+        try:
+            logger.critical("Attempting operating-system poweroff...")
+            power_off_os()
+            sys.exit(0)
+
+        except Exception:
+            logger.exception("Operating-system poweroff failed")
+
+        logger.critical(
+            f"All shutdown methods failed. Retrying in "
+            f"{SHUTDOWN_RETRY_SECONDS}s."
         )
-
-    try:
-        logger.warning(f"Stopping EC2 instance {instance_id}...")
-
-        region = require_env("AWS_REGION")
-
-        ec2 = boto3.client(
-            "ec2",
-            region_name=region,
-        )
-
-        ec2.stop_instances(InstanceIds=[instance_id])
-
-        logger.warning("Shutdown request sent successfully.")
-        sys.exit(0)
-
-    except Exception as e:
-        logger.exception(f"FAILED to stop EC2 instance: {e}")
-        sys.exit(1)
+        time.sleep(SHUTDOWN_RETRY_SECONDS)
 
 
 # =========================
@@ -184,7 +205,8 @@ def main():
 
     client = Cloudflare(api_token=api_token)
 
-    consecutive_failures = 0
+    consecutive_poll_failures = 0
+    consecutive_processing_failures = 0
     start_time = time.time()
 
     last_successful_ack_time = time.time()
@@ -200,7 +222,9 @@ def main():
 
         if time.time() - start_time > MAX_RUNTIME_SECONDS:
             logger.warning("Max runtime reached. Shutting down.")
-            shutdown_self()
+            ensure_shutdown("maximum runtime reached")
+
+        failure_stage = "poll"
 
         try:
             logger.debug("Polling queue...")
@@ -213,20 +237,21 @@ def main():
             )
 
             messages = getattr(pull_response, "messages", [])
+            consecutive_poll_failures = 0
 
             if not messages:
-                consecutive_failures = 0
                 idle_for = time.time() - last_successful_ack_time
 
                 logger.info(f"No messages. Idle since last work: {idle_for:.0f}s")
 
                 if idle_for >= IDLE_LIMIT_SECONDS:
                     logger.warning("Idle limit reached. Shutting down EC2...")
-                    shutdown_self()
+                    ensure_shutdown("idle limit reached")
 
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
+            failure_stage = "processing"
             message = messages[0]
             body = parse_body(message.body)
             lease_id = getattr(message, "lease_id", None)
@@ -247,25 +272,33 @@ def main():
             logger.info("Message acknowledged.")
 
             last_successful_ack_time = time.time()
-            consecutive_failures = 0
+            consecutive_processing_failures = 0
 
         except Exception as e:
-            consecutive_failures += 1
+            if failure_stage == "poll":
+                consecutive_poll_failures += 1
+                active_failures = consecutive_poll_failures
+            else:
+                consecutive_processing_failures += 1
+                active_failures = consecutive_processing_failures
 
             backoff = min(
-                POLL_INTERVAL_SECONDS * (2 ** (consecutive_failures - 1)),
+                POLL_INTERVAL_SECONDS * (2 ** (active_failures - 1)),
                 MAX_BACKOFF_SECONDS,
             )
 
             backoff *= random.uniform(0.8, 1.2)
 
             logger.exception(
-                f"Error ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}): {e}"
+                f"{failure_stage.capitalize()} error "
+                f"({active_failures}/{MAX_CONSECUTIVE_FAILURES}): {e}"
             )
 
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                logger.error("Too many failures. Shutting down.")
-                shutdown_self()
+            if active_failures >= MAX_CONSECUTIVE_FAILURES:
+                logger.error(f"Too many consecutive {failure_stage} failures.")
+                ensure_shutdown(
+                    f"too many consecutive {failure_stage} failures"
+                )
 
             time.sleep(backoff)
 
