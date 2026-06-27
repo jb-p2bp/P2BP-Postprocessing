@@ -75,39 +75,51 @@ def parse_body(body: Any) -> Any:
     return body
 
 
-def get_instance_id() -> Optional[str]:
-    try:
-        token_response = requests.put(
-            "http://169.254.169.254/latest/api/token",
-            headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
-            timeout=2,
-        )
-        token_response.raise_for_status()
-        token = token_response.text
+def get_instance_id(max_attempts: int = 3) -> Optional[str]:
+    for attempt in range(1, max_attempts + 1):
+        try:
+            token_response = requests.put(
+                "http://169.254.169.254/latest/api/token",
+                headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
+                timeout=2,
+            )
+            token_response.raise_for_status()
+            token = token_response.text.strip()
 
-        if not token:
-            return None
+            if not token:
+                raise requests.RequestException("IMDS returned an empty token")
 
-        response = requests.get(
-            "http://169.254.169.254/latest/meta-data/instance-id",
-            headers={"X-aws-ec2-metadata-token": token},
-            timeout=2,
-        )
-        response.raise_for_status()
+            response = requests.get(
+                "http://169.254.169.254/latest/meta-data/instance-id",
+                headers={"X-aws-ec2-metadata-token": token},
+                timeout=2,
+            )
+            response.raise_for_status()
 
-        return response.text or None
+            instance_id = response.text.strip()
+            if not instance_id:
+                raise requests.RequestException("IMDS returned an empty instance ID")
 
-    except requests.RequestException as e:
-        logger.warning(f"IMDS unavailable: {e}")
-        return None
+            return instance_id
+
+        except requests.RequestException as e:
+            logger.warning(
+                f"IMDS request failed ({attempt}/{max_attempts}): {e}"
+            )
+
+            if attempt < max_attempts:
+                time.sleep(2 ** (attempt - 1))
+
+    return None
 
 
 def shutdown_self():
     instance_id = get_instance_id()
 
     if not instance_id:
-        logger.warning("No instance ID found. Skipping shutdown.")
-        sys.exit(0)
+        raise RuntimeError(
+            "Unable to determine EC2 instance ID; instance was not stopped"
+        )
 
     try:
         logger.warning(f"Stopping EC2 instance {instance_id}...")
