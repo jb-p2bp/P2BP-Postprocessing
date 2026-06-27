@@ -232,9 +232,7 @@ def main():
             lease_id = getattr(message, "lease_id", None)
 
             if not lease_id:
-                logger.warning("Message missing lease_id. Skipping.")
-                time.sleep(POLL_INTERVAL_SECONDS)
-                continue
+                raise RuntimeError("Pulled message is missing lease_id")
 
             # =========================
             # PROCESS (MUST RAISE ON FAILURE)
