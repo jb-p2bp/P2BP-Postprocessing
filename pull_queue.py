@@ -127,11 +127,65 @@ def get_instance_id(max_attempts: int = 3) -> Optional[str]:
 
 
 def power_off_os() -> None:
+    # IMPORTANT: This is an OS-initiated shutdown. AWS applies the instance's
+    # InstanceInitiatedShutdownBehavior attribute here, so this only *stops* the
+    # instance when that attribute is "stop". If it were "terminate", this would
+    # DESTROY the instance instead of stopping it. verify_shutdown_behavior()
+    # is called at startup to guarantee the attribute is "stop" before the
+    # worker ever reaches this fallback.
     subprocess.run(
         ["sudo", "-n", "systemctl", "poweroff"],
         check=True,
         timeout=10,
     )
+
+
+def verify_shutdown_behavior(instance_id: Optional[str], region: str) -> None:
+    """Refuse to run unless OS-initiated shutdown will *stop* the instance.
+
+    The power_off_os() fallback triggers an OS-initiated shutdown, which AWS
+    resolves using the instance's InstanceInitiatedShutdownBehavior attribute.
+    If that attribute is "terminate", the fallback would destroy the instance
+    instead of stopping it, leaving nothing for the launcher to start again.
+    Fail fast at startup rather than risk that during a later shutdown.
+
+    Requires the ec2:DescribeInstanceAttribute IAM permission. This is
+    fail-closed: if the attribute cannot be positively confirmed to be "stop"
+    (unknown instance ID, missing permission, transient API error, or any other
+    value), the worker exits rather than risk destroying the instance.
+    """
+    if not instance_id:
+        logger.critical(
+            "Cannot verify InstanceInitiatedShutdownBehavior without an "
+            "instance ID. Refusing to run."
+        )
+        sys.exit(1)
+
+    try:
+        ec2 = boto3.client("ec2", region_name=region)
+        attribute = ec2.describe_instance_attribute(
+            InstanceId=instance_id,
+            Attribute="instanceInitiatedShutdownBehavior",
+        )
+        behavior = attribute["InstanceInitiatedShutdownBehavior"]["Value"]
+    except Exception:
+        logger.critical(
+            "Could not verify InstanceInitiatedShutdownBehavior (check the "
+            "ec2:DescribeInstanceAttribute permission). Refusing to run.",
+            exc_info=True,
+        )
+        sys.exit(1)
+
+    if behavior != "stop":
+        logger.critical(
+            "InstanceInitiatedShutdownBehavior is %r, not 'stop'. The OS "
+            "poweroff fallback would destroy this instance. Refusing to run; "
+            "set the shutdown behavior to 'stop' on the launch template.",
+            behavior,
+        )
+        sys.exit(1)
+
+    logger.info("Verified InstanceInitiatedShutdownBehavior=stop.")
 
 
 def ensure_shutdown(
@@ -281,6 +335,8 @@ def main() -> None:
             "Could not cache the EC2 instance ID during startup. "
             "Shutdown mode will retry metadata lookup."
         )
+
+    verify_shutdown_behavior(instance_id, region)
 
     client = Cloudflare(api_token=api_token)
 
