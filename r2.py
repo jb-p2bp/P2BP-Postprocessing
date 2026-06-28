@@ -108,6 +108,8 @@ def create_r2_client() -> BaseClient:
 
 
 def default_bucket() -> str:
+    """Return the bucket from R2_BUCKET, or raise ConfigError if unset."""
+
     return require_env("R2_BUCKET")
 
 
