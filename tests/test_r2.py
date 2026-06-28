@@ -4,6 +4,7 @@ import stat as stat_mod
 import config
 import pytest
 import r2
+from botocore.exceptions import ClientError
 
 VALID_ACCOUNT_ID = "abcdef0123456789abcdef0123456789"
 
@@ -313,3 +314,148 @@ def test_temp_download_dir_cleans_up_on_exception():
             raise RuntimeError("boom")
     assert saved is not None
     assert not saved.exists()
+
+
+# --- uploads -----------------------------------------------------------------
+
+
+def test_upload_object_calls_client_and_returns_key(fake_client, tmp_path):
+    source = tmp_path / "a.bin"
+    source.write_bytes(b"payload")
+    result = r2.upload_object(fake_client, source, "k", bucket="b")
+    assert result == "k"
+    assert fake_client.upload_calls == [(str(source), "b", "k")]
+
+
+def test_upload_object_refuses_overwrite(fake_client, tmp_path):
+    source = tmp_path / "a.bin"
+    source.write_bytes(b"payload")
+    fake_client.existing.add("k")
+    with pytest.raises(FileExistsError):
+        r2.upload_object(fake_client, source, "k", bucket="b")
+    # The transfer must not happen when the clobber check fails.
+    assert fake_client.upload_calls == []
+
+
+def test_upload_object_overwrite_allowed(fake_client, tmp_path):
+    source = tmp_path / "a.bin"
+    source.write_bytes(b"payload")
+    fake_client.existing.add("k")
+    r2.upload_object(fake_client, source, "k", bucket="b", overwrite=True)
+    assert fake_client.upload_calls == [(str(source), "b", "k")]
+
+
+def test_upload_object_bucket_defaults_to_env(fake_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("R2_BUCKET", "env-bucket")
+    source = tmp_path / "a.bin"
+    source.write_bytes(b"payload")
+    r2.upload_object(fake_client, source, "k")
+    assert fake_client.upload_calls[-1][1] == "env-bucket"
+
+
+def test_upload_object_missing_bucket_raises(fake_client, tmp_path, monkeypatch):
+    monkeypatch.delenv("R2_BUCKET", raising=False)
+    source = tmp_path / "a.bin"
+    source.write_bytes(b"payload")
+    with pytest.raises(config.ConfigError):
+        r2.upload_object(fake_client, source, "k")
+
+
+@pytest.mark.parametrize("bad", ["", ".", ".."])
+def test_upload_object_rejects_degenerate_key(fake_client, tmp_path, bad):
+    source = tmp_path / "a.bin"
+    source.write_bytes(b"payload")
+    with pytest.raises(ValueError):
+        r2.upload_object(fake_client, source, bad, bucket="b")
+
+
+def test_upload_object_accepts_slashed_key(fake_client, tmp_path):
+    source = tmp_path / "a.las"
+    source.write_bytes(b"payload")
+    key = "scans/2024/a.las"
+    assert r2.upload_object(fake_client, source, key, bucket="b") == key
+    assert fake_client.upload_calls == [(str(source), "b", key)]
+
+
+def test_upload_from_dir_uses_explicit_key(fake_client, tmp_path):
+    source = tmp_path / "scan.las"
+    source.write_bytes(b"payload")
+    result = r2.upload_from_dir(
+        fake_client, tmp_path, "scan.las", "scans/2024/scan.las", bucket="b"
+    )
+    assert result == "scans/2024/scan.las"
+    assert fake_client.upload_calls == [(str(source), "b", "scans/2024/scan.las")]
+
+
+def test_upload_from_dir_does_not_infer_key_from_filename(fake_client, tmp_path):
+    source = tmp_path / "scan.las"
+    source.write_bytes(b"payload")
+    # The key is unrelated to the filename; passing a distinct one is honored.
+    result = r2.upload_from_dir(fake_client, tmp_path, "scan.las", "renamed.las", bucket="b")
+    assert result == "renamed.las"
+    assert fake_client.upload_calls == [(str(source), "b", "renamed.las")]
+
+
+def test_upload_from_dir_strips_traversal(fake_client, tmp_path):
+    # _safe_join collapses to basename, so the source is tmp_path/evil; the
+    # "../etc" cannot read outside the directory. The key is independent.
+    source = tmp_path / "evil"
+    source.write_bytes(b"payload")
+    result = r2.upload_from_dir(fake_client, tmp_path, "../../../etc/evil", "out", bucket="b")
+    assert result == "out"
+    assert fake_client.upload_calls == [(str(source), "b", "out")]
+
+
+def test_upload_from_dir_collision_raises(fake_client, tmp_path):
+    source = tmp_path / "scan.las"
+    source.write_bytes(b"payload")
+    fake_client.existing.add("scan.las")
+    with pytest.raises(FileExistsError):
+        r2.upload_from_dir(fake_client, tmp_path, "scan.las", "scan.las", bucket="b")
+    assert fake_client.upload_calls == []
+
+
+def test_upload_from_dir_rejects_degenerate_filename(fake_client, tmp_path):
+    with pytest.raises(ValueError):
+        r2.upload_from_dir(fake_client, tmp_path, "", "somekey", bucket="b")
+
+
+def test_upload_from_dir_rejects_degenerate_key(fake_client, tmp_path):
+    source = tmp_path / "scan.las"
+    source.write_bytes(b"payload")
+    with pytest.raises(ValueError):
+        r2.upload_from_dir(fake_client, tmp_path, "scan.las", "", bucket="b")
+
+
+# --- _object_exists / _safe_key ----------------------------------------------
+
+
+def test_object_exists_false_for_missing(fake_client):
+    assert r2._object_exists(fake_client, "b", "absent") is False
+
+
+def test_object_exists_true_when_present(fake_client):
+    fake_client.existing.add("k")
+    assert r2._object_exists(fake_client, "b", "k") is True
+
+
+def test_object_exists_reraises_non_404():
+    class ForbiddenClient:
+        def head_object(self, Bucket, Key):
+            raise ClientError(
+                {"Error": {"Code": "403", "Message": "Forbidden"}}, "HeadObject"
+            )
+
+    with pytest.raises(ClientError):
+        r2._object_exists(ForbiddenClient(), "b", "k")
+
+
+@pytest.mark.parametrize("bad", ["", ".", ".."])
+def test_safe_key_rejects_degenerate(bad):
+    with pytest.raises(ValueError):
+        r2._safe_key(bad)
+
+
+@pytest.mark.parametrize("ok", ["a.las", "scans/2024/a.las", "with space"])
+def test_safe_key_accepts_normal_keys(ok):
+    assert r2._safe_key(ok) == ok
