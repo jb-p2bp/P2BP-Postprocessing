@@ -155,8 +155,8 @@ def download_to_dir(
     By default the filename is the last path segment of the key.
     """
 
-    name = filename or key_basename(key)
-    return download_object(client, bucket, key, directory / name)
+    dest = _safe_join(directory, filename or key)
+    return download_object(client, bucket, key, dest)
 
 
 def download_to_temp(
@@ -175,7 +175,28 @@ def download_to_temp(
     return download_to_dir(client, bucket, key, new_download_dir(label))
 
 
-def key_basename(key: str) -> str:
-    """Last segment of an R2 object key (keys use forward slashes)."""
+def _safe_join(directory: Path, name: str) -> Path:
+    """Join `name` onto `directory`, refusing to escape it.
 
-    return key.rstrip("/").rsplit("/", 1)[-1] or "download"
+    `name` may be a full R2 object key (e.g. "scans/2024/a.las") or an explicit
+    filename. Only its last path segment is used, so absolute paths and ".."
+    traversal cannot write outside `directory`. Raises ValueError if no usable
+    filename can be derived (empty key, "." or ".."), rather than silently
+    inventing one.
+    """
+
+    # Normalise Windows separators so basename works the same on every OS, then
+    # collapse to the final path component.
+    base = os.path.basename(name.replace("\\", "/"))
+
+    if base in ("", ".", ".."):
+        raise ValueError(f"cannot derive a safe filename from {name!r}")
+
+    dest = directory / base
+
+    # Defense in depth: confirm the resolved path stays inside `directory`.
+    directory_resolved = directory.resolve()
+    if os.path.commonpath([directory_resolved, dest.resolve()]) != str(directory_resolved):
+        raise ValueError(f"refusing to write {name!r} outside {directory}")
+
+    return dest
