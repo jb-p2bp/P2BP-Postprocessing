@@ -6,7 +6,7 @@ import signal
 import random
 import logging
 import subprocess
-from typing import Any, Optional
+from typing import Any, NoReturn, Optional
 
 import boto3
 import requests
@@ -123,26 +123,42 @@ def power_off_os() -> None:
     )
 
 
-def ensure_shutdown(reason: str) -> None:
+def ensure_shutdown(
+    reason: str,
+    instance_id: Optional[str],
+    region: str,
+) -> NoReturn:
     logger.critical(f"Entering shutdown mode: {reason}")
+
+    shutdown_instance_id = instance_id
 
     while True:
         try:
-            instance_id = get_instance_id()
-            if not instance_id:
+            if not shutdown_instance_id:
+                shutdown_instance_id = get_instance_id()
+
+            if not shutdown_instance_id:
                 raise RuntimeError("Unable to determine EC2 instance ID")
 
-            region = os.getenv("AWS_REGION")
-            if not region:
-                raise RuntimeError("Missing required environment variable: AWS_REGION")
-
-            logger.warning(f"Stopping EC2 instance {instance_id} via EC2 API...")
+            logger.warning(
+                f"Stopping EC2 instance {shutdown_instance_id} via EC2 API..."
+            )
 
             ec2 = boto3.client("ec2", region_name=region)
-            ec2.stop_instances(InstanceIds=[instance_id])
+            ec2.stop_instances(InstanceIds=[shutdown_instance_id])
 
-            logger.warning("EC2 stop request sent successfully.")
-            sys.exit(0)
+            logger.warning(
+                "EC2 stop request accepted. Waiting for the instance to stop."
+            )
+
+            # Keep the process alive so a supervisor cannot restart it during
+            # the asynchronous EC2 stop window. Restore default signal handling
+            # so the operating system can terminate it during shutdown.
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+            while True:
+                time.sleep(60)
 
         except Exception:
             logger.exception("EC2 API shutdown failed")
@@ -199,7 +215,16 @@ def main():
     account_id = require_env("CLOUDFLARE_ACCOUNT_ID")
     queue_id = require_env("CLOUDFLARE_QUEUE_ID")
     api_token = require_env("CLOUDFLARE_API_TOKEN")
-    require_env("AWS_REGION")
+    region = require_env("AWS_REGION")
+
+    instance_id = get_instance_id()
+    if instance_id:
+        logger.info(f"Cached EC2 instance ID: {instance_id}")
+    else:
+        logger.warning(
+            "Could not cache the EC2 instance ID during startup. "
+            "Shutdown mode will retry metadata lookup."
+        )
 
     client = Cloudflare(api_token=api_token)
 
@@ -220,7 +245,7 @@ def main():
 
         if time.monotonic() - start_time > MAX_RUNTIME_SECONDS:
             logger.warning("Max runtime reached. Shutting down.")
-            ensure_shutdown("maximum runtime reached")
+            ensure_shutdown("maximum runtime reached", instance_id, region)
 
         failure_stage = "poll"
 
@@ -244,7 +269,7 @@ def main():
 
                 if idle_for >= IDLE_LIMIT_SECONDS:
                     logger.warning("Idle limit reached. Shutting down EC2...")
-                    ensure_shutdown("idle limit reached")
+                    ensure_shutdown("idle limit reached", instance_id, region)
 
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
@@ -295,7 +320,9 @@ def main():
             if active_failures >= MAX_CONSECUTIVE_FAILURES:
                 logger.error(f"Too many consecutive {failure_stage} failures.")
                 ensure_shutdown(
-                    f"too many consecutive {failure_stage} failures"
+                    f"too many consecutive {failure_stage} failures",
+                    instance_id,
+                    region,
                 )
 
             time.sleep(backoff)
