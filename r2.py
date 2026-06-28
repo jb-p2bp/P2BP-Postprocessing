@@ -34,6 +34,17 @@ from botocore.config import Config
 
 from config import ConfigError, require_env
 
+__all__ = [
+    "InsecureTempDirError",
+    "create_r2_client",
+    "default_bucket",
+    "new_download_dir",
+    "temp_download_dir",
+    "download_object",
+    "download_to_dir",
+    "download_to_temp",
+]
+
 
 # --- Configuration -----------------------------------------------------------
 
@@ -42,6 +53,11 @@ _ACCOUNT_ID_RE = re.compile(r"[0-9a-f]{32}")
 
 
 def r2_endpoint_url(account_id: str) -> str:
+    """Return the R2 S3-compatible endpoint URL for `account_id`.
+
+    Raises ConfigError if the id is not a 32-char lowercase hex string.
+    """
+
     # Account ids are interpolated into the endpoint host, so reject anything
     # that isn't a Cloudflare account id (32 lowercase hex chars) to avoid a
     # malformed value redirecting the host/path.
