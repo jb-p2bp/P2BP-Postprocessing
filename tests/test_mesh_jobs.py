@@ -32,19 +32,26 @@ class TestMeshGenerateJob:
         message = MeshGenerateJob(
             organizationId="org",
             projectId="proj",
-            zoneScanObjectKeys=[],
+            zoneScanObjectKeys=["a/b.zip"],
         )
 
         assert message.type == MESH_GENERATE_TYPE
         assert message.version == MESH_GENERATE_VERSION
 
-    def test_empty_scan_keys_allowed(self) -> None:
-        message = MeshGenerateJob(
-            organizationId="org",
-            projectId="proj",
-        )
+    def test_empty_scan_keys_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MeshGenerateJob(
+                organizationId="org",
+                projectId="proj",
+                zoneScanObjectKeys=[],
+            )
 
-        assert message.zoneScanObjectKeys == []
+    def test_missing_scan_keys_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MeshGenerateJob(
+                organizationId="org",
+                projectId="proj",
+            )
 
     def test_explicit_type_must_match(self) -> None:
         with pytest.raises(ValidationError):
@@ -52,7 +59,7 @@ class TestMeshGenerateJob:
                 type=MESH_REFINE_TYPE,
                 organizationId="org",
                 projectId="proj",
-                zoneScanObjectKeys=[],
+                zoneScanObjectKeys=["a/b.zip"],
             )
 
     def test_extra_fields_rejected(self) -> None:
@@ -60,7 +67,7 @@ class TestMeshGenerateJob:
             MeshGenerateJob(
                 organizationId="org",
                 projectId="proj",
-                zoneScanObjectKeys=[],
+                zoneScanObjectKeys=["a/b.zip"],
                 unexpected="value",  # type: ignore[call-arg]
             )
 
@@ -69,7 +76,7 @@ class TestMeshGenerateJob:
             MeshGenerateJob(
                 organizationId="",
                 projectId="proj",
-                zoneScanObjectKeys=[],
+                zoneScanObjectKeys=["a/b.zip"],
             )
 
     def test_empty_project_id_rejected(self) -> None:
@@ -77,7 +84,7 @@ class TestMeshGenerateJob:
             MeshGenerateJob(
                 organizationId="org",
                 projectId="",
-                zoneScanObjectKeys=[],
+                zoneScanObjectKeys=["a/b.zip"],
             )
 
 
@@ -180,7 +187,7 @@ class TestParseMeshJobMessage:
                     "version": 2,
                     "organizationId": "org",
                     "projectId": "proj",
-                    "zoneScanObjectKeys": [],
+                    "zoneScanObjectKeys": ["a/b.zip"],
                 }
             )
 
