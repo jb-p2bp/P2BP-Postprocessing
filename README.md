@@ -173,6 +173,12 @@ Optional. Base directory for temporary downloads. Must be an **absolute** path,
 and its parent directory must already exist. Defaults to `<system temp>/p2bp-tmp`
 (i.e. `/tmp/p2bp-tmp` on the EC2 Linux host).
 
+For security, every ancestor directory of this path must be trusted — owned by
+the worker user, or under a sticky directory such as `/tmp`. Do **not** point it
+under a world- or group-writable, non-sticky directory: the download tree is
+created with strict ownership/permission checks, but those checks cannot protect
+against a hostile ancestor that could redirect the path.
+
 ---
 
 # Queue Requirements

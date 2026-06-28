@@ -124,6 +124,12 @@ def _tmp_base_dir() -> Path:
 def _r2_downloads_dir() -> Path:
     # Build the tree one level at a time so each predictable component is
     # created/verified as a private directory we own (see _ensure_private_dir).
+    #
+    # O_NOFOLLOW only guards the final component of each open, so this remains
+    # safe only if the *ancestors* of the base are trusted -- i.e. owned by us
+    # or under a sticky directory (the default /tmp is sticky). Pointing
+    # P2BP_TMP_DIR under a world/group-writable, non-sticky directory voids that
+    # assumption; document this requirement for operators.
     base = _ensure_private_dir(_tmp_base_dir())
     return _ensure_private_dir(base / "r2-downloads")
 
