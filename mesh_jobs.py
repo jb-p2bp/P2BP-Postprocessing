@@ -4,6 +4,10 @@ Each message carries a `type` and `version` so the EC2 consumer can dispatch
 on type and evolve its schema over time. The discriminated union below mirrors
 the `MeshJobQueueMessage` type defined in
 `p2bp-cf-worker/src/routes/api/mesh.jobs.builder.ts`.
+
+Field names are intentionally camelCase to match that JSON wire contract
+exactly. Do not rename them to snake_case -- it would break deserialization
+of messages produced by the worker.
 """
 
 from typing import Annotated, Literal
