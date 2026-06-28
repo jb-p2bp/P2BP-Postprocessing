@@ -246,7 +246,14 @@ def download_object(
         )
     logger.info("Downloading r2://%s/%s -> %s", bucket, key, dest)
     client.download_file(bucket, key, str(dest))
-    logger.debug("Downloaded %s (%d bytes)", dest, dest.stat().st_size)
+    if logger.isEnabledFor(logging.DEBUG):
+        # Read the size defensively: the download already succeeded, so a
+        # concurrent removal of dest must not turn that success into an error.
+        try:
+            size = dest.stat().st_size
+        except OSError:
+            size = -1
+        logger.debug("Downloaded %s (%d bytes)", dest, size)
     return dest
 
 
