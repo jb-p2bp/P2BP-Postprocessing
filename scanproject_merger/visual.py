@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -40,6 +41,20 @@ def _matrix(values: list[float], size: int) -> NDArray[np.float64]:
     return np.asarray(values, dtype=np.float64).reshape((size, size), order="F")
 
 
+def _keyframe_file(project_path: Path, name: str) -> Path | None:
+    """Resolve a keyframe sidecar by its manifest-supplied name.
+
+    Returns ``None`` for any name that escapes the package's ``keyframes``
+    directory (an absolute path or ``..`` traversal), so a crafted package
+    cannot make us read files outside itself.
+    """
+    base = (project_path / "keyframes").resolve()
+    candidate = (base / name).resolve()
+    if base not in candidate.parents:
+        return None
+    return candidate
+
+
 def _extract(project: ScanProject, cache: FeatureCache, maximum_keyframes: int = 120) -> _Features | None:
     cache_key = str(project.path.resolve())
     if cache_key in cache:
@@ -63,7 +78,10 @@ def _extract(project: ScanProject, cache: FeatureCache, maximum_keyframes: int =
     image_points: list[NDArray[np.float32]] = []
     usable_frames: list[dict] = []
     for frame in frames:
-        image = cv2.imread(str(project.path / "keyframes" / frame["imageFilename"]), cv2.IMREAD_GRAYSCALE)
+        image_path = _keyframe_file(project.path, frame["imageFilename"])
+        if image_path is None:
+            continue
+        image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
         if image is None:
             continue
         scale = min(1.0, 960.0 / image.shape[1])
@@ -97,14 +115,19 @@ def _world_point(project: ScanProject, features: _Features, feature_index: int) 
     depth_x = int(np.clip(round(point[0] * width / frame["imageWidth"]), 0, width - 1))
     depth_y = int(np.clip(round(point[1] * height / frame["imageHeight"]), 0, height - 1))
     offset = depth_y * width + depth_x
-    directory = project.path / "keyframes"
-    depth = np.memmap(directory / payload["depthMapFilename"], dtype="<f4", mode="r", shape=(height * width,))
+    depth_path = _keyframe_file(project.path, payload["depthMapFilename"])
+    if depth_path is None:
+        return None
+    depth = np.memmap(depth_path, dtype="<f4", mode="r", shape=(height * width,))
     value = float(depth[offset])
     if not np.isfinite(value) or value <= 0.05 or value > 8.0:
         return None
     confidence_name = payload.get("confidenceMapFilename")
     if confidence_name:
-        confidence = np.memmap(directory / confidence_name, dtype="u1", mode="r", shape=(height * width,))
+        confidence_path = _keyframe_file(project.path, confidence_name)
+        if confidence_path is None:
+            return None
+        confidence = np.memmap(confidence_path, dtype="u1", mode="r", shape=(height * width,))
         if confidence[offset] < 1:
             return None
     intrinsics = _matrix(frame["cameraIntrinsics"], 3)

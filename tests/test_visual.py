@@ -1,8 +1,21 @@
+from pathlib import Path
+
 import numpy as np
 
 from scanproject_merger.format import transform_points
 from scanproject_merger.registration import register_pair, rigid_transform
-from scanproject_merger.visual import _fit_yaw, _matrix
+from scanproject_merger.visual import _fit_yaw, _keyframe_file, _matrix
+
+
+def test_keyframe_file_allows_names_inside_the_keyframes_directory(tmp_path: Path):
+    resolved = _keyframe_file(tmp_path, "frame-001.jpg")
+    assert resolved == (tmp_path / "keyframes" / "frame-001.jpg").resolve()
+
+
+def test_keyframe_file_rejects_traversal_and_absolute_paths(tmp_path: Path):
+    assert _keyframe_file(tmp_path, "../../secret.txt") is None
+    assert _keyframe_file(tmp_path, "../keyframes-sibling/x") is None
+    assert _keyframe_file(tmp_path, str(Path(tmp_path).anchor or "/") + "etc/passwd") is None
 
 
 def test_decodes_swift_column_major_camera_matrix():
