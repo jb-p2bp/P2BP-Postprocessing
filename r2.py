@@ -371,7 +371,7 @@ def upload_object(
     """
 
     bucket = bucket or default_bucket()
-    _safe_key(key)
+    key = _safe_key(key)
     if not overwrite and _object_exists(client, bucket, key):
         raise FileExistsError(
             f"r2://{bucket}/{key} already exists; pass overwrite=True to replace it"
