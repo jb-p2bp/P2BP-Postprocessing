@@ -132,13 +132,22 @@ def download_object(
     bucket: str,
     key: str,
     dest: Path,
+    overwrite: bool = False,
 ) -> Path:
     """Download a single R2 object to `dest` (a full file path).
 
     Parent directories are created as needed. Returns the destination path.
+
+    Refuses to clobber an existing file unless `overwrite=True`, so a key
+    collision (two objects mapping to the same local name) surfaces as an
+    error instead of silently destroying the earlier download.
     """
 
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if not overwrite and dest.exists():
+        raise FileExistsError(
+            f"{dest} already exists; pass overwrite=True to replace it"
+        )
     client.download_file(bucket, key, str(dest))
     return dest
 
@@ -149,14 +158,17 @@ def download_to_dir(
     key: str,
     directory: Path,
     filename: Optional[str] = None,
+    overwrite: bool = False,
 ) -> Path:
     """Download an object into `directory`, returning the written file path.
 
-    By default the filename is the last path segment of the key.
+    By default the filename is the last path segment of the key. Two keys
+    sharing that segment would map to the same local file; the download
+    refuses to overwrite an existing one unless `overwrite=True`.
     """
 
     dest = _safe_join(directory, filename or key)
-    return download_object(client, bucket, key, dest)
+    return download_object(client, bucket, key, dest, overwrite=overwrite)
 
 
 def download_to_temp(
