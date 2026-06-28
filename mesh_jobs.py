@@ -20,6 +20,17 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapte
 # so values like " " are rejected rather than treated as valid ids.
 NonEmptyId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
+__all__ = [
+    "MESH_GENERATE_TYPE",
+    "MESH_REFINE_TYPE",
+    "MESH_GENERATE_VERSION",
+    "MESH_REFINE_VERSION",
+    "MeshGenerateJob",
+    "MeshRefineJob",
+    "MeshJobMessage",
+    "parse_mesh_job_message",
+]
+
 MESH_GENERATE_TYPE = "mesh.generate"
 MESH_REFINE_TYPE = "mesh.refine"
 
