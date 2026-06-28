@@ -20,6 +20,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Seconds with no completed work before the instance shuts itself down. The
+# idle clock starts at boot (see last_completed_work_time in main), so an
+# instance that boots to an empty queue stops itself after this window. This is
+# intentional: a Cloudflare worker enqueues a message *before* powering this
+# instance on, so an instance being up implies work should be waiting. If none
+# is found, the instance is unexpected and should shut down promptly.
 IDLE_LIMIT_SECONDS = int(os.getenv("IDLE_LIMIT_SECONDS", "60"))
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "15"))
 MAX_CONSECUTIVE_FAILURES = int(os.getenv("MAX_CONSECUTIVE_FAILURES", "10"))
