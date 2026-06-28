@@ -109,6 +109,15 @@ def r2_downloads_dir() -> Path:
     return _ensure_private_dir(base / "r2-downloads")
 
 
+class InsecureTempDirError(RuntimeError):
+    """Raised when a download temp directory fails its safety checks.
+
+    Signals a symlink, foreign-owned, or non-directory path where we expected a
+    private directory we own -- distinct from a ConfigError (bad configuration)
+    so callers can handle a potential hijack specifically.
+    """
+
+
 def _ensure_private_dir(path: Path) -> Path:
     """Create `path` as a 0700 directory and verify we own it.
 
@@ -141,14 +150,14 @@ def _ensure_private_dir(path: Path) -> Path:
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
     except OSError as error:
-        raise RuntimeError(
+        raise InsecureTempDirError(
             f"refusing to use temp dir {path}: not a regular directory ({error})"
         ) from error
 
     try:
         info = os.fstat(fd)
         if info.st_uid != os.getuid():
-            raise RuntimeError(
+            raise InsecureTempDirError(
                 f"refusing to use temp dir {path}: owned by uid {info.st_uid}, "
                 f"not us"
             )
