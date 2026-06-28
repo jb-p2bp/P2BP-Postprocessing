@@ -1,0 +1,129 @@
+"""High-level entry points for registering and merging ``.scanproject`` packages.
+
+This module replaces the standalone tool's command-line interface with a
+programmatic API. ``merge_scan_projects`` performs the same discover → register →
+export pipeline as the CLI but returns structured results instead of printing and
+exiting, so it can be embedded in the P2BP postprocessing pipeline.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterable
+
+from .export import (
+    export_merged_cloud,
+    export_original_scans,
+    export_transformed_scans,
+    write_registration_report,
+)
+from .format import ScanProject, ScanProjectError
+from .registration import RegistrationResult, register_scans
+
+
+def discover(inputs: Iterable[str | Path]) -> list[Path]:
+    """Resolve scan packages from explicit ``.scanproject`` paths or parent directories.
+
+    Each input may be an individual ``.scanproject`` directory or a directory whose
+    immediate children are scan packages. Duplicates are removed and the result is
+    sorted for deterministic ordering. Raises :class:`ScanProjectError` when nothing
+    resolves to a scan package.
+    """
+    packages: dict[Path, None] = {}
+    for value in (Path(item) for item in inputs):
+        if value.suffix == ".scanproject":
+            packages[value.resolve()] = None
+        elif value.is_dir():
+            for package in value.glob("*.scanproject"):
+                packages[package.resolve()] = None
+        else:
+            raise ScanProjectError(f"input does not exist or is not a scan package: {value}")
+    if not packages:
+        raise ScanProjectError("no .scanproject packages found")
+    return sorted(packages)
+
+
+@dataclass(frozen=True)
+class MergeOutputs:
+    """Paths and statistics produced by :func:`merge_scan_projects`."""
+
+    output: Path
+    report: Path
+    point_count: int
+    result: RegistrationResult
+    transformed_scans: list[Path] = field(default_factory=list)
+    original_scans: list[Path] = field(default_factory=list)
+
+
+def merge_scan_projects(
+    inputs: Iterable[str | Path],
+    output: str | Path,
+    *,
+    report: str | Path | None = None,
+    transformed_scans_dir: str | Path | None = None,
+    original_scans_dir: str | Path | None = None,
+    registration_voxel: float = 0.10,  # 10 cm ICP sampling.
+    deduplicate_voxel: float = 0.02,  # 2 cm output grid.
+    registration_minimum_confidence: int = 1,  # Align on medium+ confidence.
+    export_minimum_confidence: int = 0,  # Preserve all output points.
+    candidate_padding: float = 10.0,  # Metres around scan bounds.
+    maximum_distance: float = 5.0,  # Initial ICP gate in metres.
+    minimum_overlap: float = 0.03,  # Require 3% sampled overlap.
+    maximum_rmse: float = 0.40,  # Accepted RMSE ceiling in metres.
+    maximum_loop_yaw_degrees: float = 3.0,
+    maximum_loop_horizontal_error: float = 1.0,
+    maximum_loop_vertical_error: float = 1.0,
+    use_visual_registration: bool = True,
+) -> MergeOutputs:
+    """Register overlapping scan packages and write a merged LAS/LAZ point cloud.
+
+    ``inputs`` may mix individual ``.scanproject`` directories and parent directories
+    containing them; they are resolved with :func:`discover`. The merged cloud is
+    written to ``output`` and an audit report to ``report`` (defaulting to
+    ``output`` with a ``.registration.json`` suffix). When ``transformed_scans_dir``
+    or ``original_scans_dir`` is given, one LAZ file per source scan is also written
+    there. Source packages are never modified.
+
+    Raises :class:`ScanProjectError` for malformed packages and :class:`ValueError`
+    for inconsistent or unregisterable inputs.
+    """
+    projects = [ScanProject.open(path) for path in discover(inputs)]
+    result = register_scans(
+        projects,
+        voxel_size=registration_voxel,
+        minimum_confidence=registration_minimum_confidence,
+        candidate_padding=candidate_padding,
+        maximum_distance=maximum_distance,
+        minimum_overlap=minimum_overlap,
+        maximum_rmse=maximum_rmse,
+        maximum_loop_yaw_degrees=maximum_loop_yaw_degrees,
+        maximum_loop_horizontal_error=maximum_loop_horizontal_error,
+        maximum_loop_vertical_error=maximum_loop_vertical_error,
+        use_visual_registration=use_visual_registration,
+    )
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    point_count = export_merged_cloud(
+        result, output_path, export_minimum_confidence, deduplicate_voxel
+    )
+    report_path = Path(report) if report else output_path.with_suffix(".registration.json")
+    write_registration_report(result, report_path, point_count)
+    transformed_scans = (
+        export_transformed_scans(result, transformed_scans_dir, export_minimum_confidence)
+        if transformed_scans_dir
+        else []
+    )
+    original_scans = (
+        export_original_scans(result, original_scans_dir, export_minimum_confidence)
+        if original_scans_dir
+        else []
+    )
+    return MergeOutputs(
+        output=output_path,
+        report=report_path,
+        point_count=point_count,
+        result=result,
+        transformed_scans=transformed_scans,
+        original_scans=original_scans,
+    )
