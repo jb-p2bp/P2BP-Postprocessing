@@ -20,7 +20,8 @@ This repository serves as the foundation for future point cloud processing and m
 ```text
 .
 ├── pull_queue.py
-├── requirements.txt
+├── pyproject.toml
+├── uv.lock
 └── README.md
 ```
 
@@ -37,9 +38,13 @@ Responsibilities:
 * Display message contents
 * Acknowledge messages
 
-### requirements.txt
+### pyproject.toml
 
-Python package dependencies required to run the worker.
+Project metadata and Python package dependencies, managed by [uv](https://docs.astral.sh/uv/).
+
+### uv.lock
+
+Pinned, reproducible dependency versions resolved by uv. Commit this file.
 
 ### README.md
 
@@ -51,15 +56,17 @@ Setup and development documentation.
 
 Before running the worker, ensure the following are installed:
 
-* Python 3.10+
+* [uv](https://docs.astral.sh/uv/) (manages Python and dependencies)
 * Git
 * Access to the Cloudflare account containing the queue
 
-Verify Python installation:
+Verify uv installation:
 
 ```bash
-python3 --version
+uv --version
 ```
+
+uv will automatically download a compatible Python (3.12+) if one is not present.
 
 ---
 
@@ -72,30 +79,12 @@ git clone <repository-url>
 cd <repository-name>
 ```
 
-## Create Virtual Environment
-
-```bash
-python3 -m venv venv
-```
-
-## Activate Virtual Environment
-
-Linux / Ubuntu:
-
-```bash
-source venv/bin/activate
-```
-
-Deactivate:
-
-```bash
-deactivate
-```
-
 ## Install Dependencies
 
+uv creates the virtual environment and installs all dependencies from `uv.lock`:
+
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ---
@@ -165,16 +154,16 @@ messages cannot be pulled unless http_pull mode is enabled
 
 # Running the instance
 
-Activate the virtual environment:
+Run with uv (no manual activation needed):
 
 ```bash
-source venv/bin/activate
+uv run pull_queue.py
 ```
 
-Run:
+Or via the installed entry point:
 
 ```bash
-python pull_queue.py
+uv run pull-queue
 ```
 
 ---
