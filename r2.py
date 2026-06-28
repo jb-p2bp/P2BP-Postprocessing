@@ -21,6 +21,7 @@ Optional:
 
 import os
 import shutil
+import stat
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -80,8 +81,39 @@ def tmp_base_dir() -> Path:
 
 
 def r2_downloads_dir() -> Path:
-    path = tmp_base_dir() / "r2-downloads"
-    path.mkdir(parents=True, exist_ok=True)
+    # Build the tree one level at a time so each predictable component is
+    # created/verified as a private directory we own (see _ensure_private_dir).
+    base = _ensure_private_dir(tmp_base_dir())
+    return _ensure_private_dir(base / "r2-downloads")
+
+
+def _ensure_private_dir(path: Path) -> Path:
+    """Create `path` as a 0700 directory and verify we own it.
+
+    The download base lives at a predictable location (e.g. /tmp/p2bp-tmp)
+    under world-writable /tmp. Plain mkdir(exist_ok=True) would silently adopt
+    a pre-existing symlink or another user's directory, letting a local
+    attacker redirect every download. On POSIX we therefore reject a symlink
+    or foreign-owned directory and tighten loose permissions. On non-POSIX
+    platforms (local Windows dev) the ownership model differs, so we just
+    ensure the directory exists.
+    """
+
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    if not hasattr(os, "getuid"):  # non-POSIX (e.g. Windows dev machines)
+        return path
+
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode):
+        raise RuntimeError(f"refusing to use temp dir {path}: it is a symlink")
+    if info.st_uid != os.getuid():
+        raise RuntimeError(
+            f"refusing to use temp dir {path}: owned by uid {info.st_uid}, not us"
+        )
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        os.chmod(path, 0o700)
+
     return path
 
 
