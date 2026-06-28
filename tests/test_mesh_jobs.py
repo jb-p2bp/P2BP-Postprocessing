@@ -265,9 +265,13 @@ class TestParseMeshJobMessage:
             )
 
 
-class TestMirrorsWorkerContract:
-    """Snapshot the field names and constants against the p2bp-cf-worker
-    contract defined in `src/routes/api/mesh.jobs.builder.ts`."""
+class TestContractSnapshot:
+    """Pin the field names and constants to a manual transcription of the
+    p2bp-cf-worker contract in `src/routes/api/mesh.jobs.builder.ts`.
+
+    These assertions only catch drift on the Python side -- they do not read
+    the TypeScript file, so a change to the worker contract must be mirrored
+    here by hand. Keep this class in sync when the worker contract changes."""
 
     def test_generate_field_names_match_worker(self) -> None:
         fields = set(MeshGenerateJob.model_fields)
