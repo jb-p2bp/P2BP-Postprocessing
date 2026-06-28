@@ -26,7 +26,7 @@ import stat
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
+from collections.abc import Iterator
 
 import boto3
 from botocore.client import BaseClient
@@ -160,7 +160,7 @@ def _ensure_private_dir(path: Path) -> Path:
     return path
 
 
-def new_download_dir(label: Optional[str] = None) -> Path:
+def new_download_dir(label: str | None = None) -> Path:
     """Create and return a unique directory for one download/job.
 
     `label` (e.g. a job or project id) is used as a readable prefix so the
@@ -173,7 +173,7 @@ def new_download_dir(label: Optional[str] = None) -> Path:
 
 
 @contextmanager
-def temp_download_dir(label: Optional[str] = None) -> Iterator[Path]:
+def temp_download_dir(label: str | None = None) -> Iterator[Path]:
     """Context manager yielding a unique download dir, removed on exit."""
 
     path = new_download_dir(label)
@@ -197,7 +197,7 @@ def download_object(
     client: BaseClient,
     key: str,
     dest: Path,
-    bucket: Optional[str] = None,
+    bucket: str | None = None,
     overwrite: bool = False,
 ) -> Path:
     """Download a single R2 object to `dest` (a full file path).
@@ -224,8 +224,8 @@ def download_to_dir(
     client: BaseClient,
     key: str,
     directory: Path,
-    bucket: Optional[str] = None,
-    filename: Optional[str] = None,
+    bucket: str | None = None,
+    filename: str | None = None,
     overwrite: bool = False,
 ) -> Path:
     """Download an object into `directory`, returning the written file path.
@@ -243,8 +243,8 @@ def download_to_dir(
 def download_to_temp(
     client: BaseClient,
     key: str,
-    bucket: Optional[str] = None,
-    label: Optional[str] = None,
+    bucket: str | None = None,
+    label: str | None = None,
 ) -> Path:
     """Download an object into a fresh, unique temp directory.
 
