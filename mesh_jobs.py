@@ -1,8 +1,10 @@
 """Pydantic models for messages produced by p2bp-cf-worker on the MESH_JOBS queue.
 
-Each message carries a `type` and `version` so the EC2 consumer can dispatch
-on type and evolve its schema over time. The discriminated union below mirrors
-the `MeshJobQueueMessage` type defined in
+Each message carries a `type` for dispatch and a `version` that is pinned per
+variant: a consumer validates only the exact schema version it was built for
+and rejects any other version, so an incompatible producer fails loudly rather
+than being silently mis-parsed. The discriminated union below mirrors the
+`MeshJobQueueMessage` type defined in
 `p2bp-cf-worker/src/routes/api/mesh.jobs.builder.ts`.
 
 Field names are intentionally camelCase to match that JSON wire contract
@@ -49,6 +51,10 @@ class MeshRefineJob(_MeshJobBase):
     version: Literal[MESH_REFINE_VERSION] = MESH_REFINE_VERSION
 
 
+# `version` is an exact pin per variant, so a new schema revision is added as a
+# new model in this union (e.g. a MeshGenerateJobV2 with version=2) rather than
+# by editing the existing classes. The discriminator is `type`; if two revisions
+# ever need to share a `type`, switch to a nested (type, version) discriminator.
 MeshJobMessage = Annotated[
     MeshGenerateJob | MeshRefineJob,
     Field(discriminator="type"),
