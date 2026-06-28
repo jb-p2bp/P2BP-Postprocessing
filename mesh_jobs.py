@@ -6,7 +6,7 @@ the `MeshJobQueueMessage` type defined in
 `p2bp-cf-worker/src/routes/api/mesh.jobs.builder.ts`.
 """
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
@@ -41,7 +41,7 @@ class MeshRefineJob(BaseModel):
 
 
 MeshJobMessage = Annotated[
-    Union[MeshGenerateJob, MeshRefineJob],
+    MeshGenerateJob | MeshRefineJob,
     Field(discriminator="type"),
 ]
 
