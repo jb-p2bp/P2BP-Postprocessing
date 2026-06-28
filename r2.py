@@ -342,8 +342,7 @@ def _safe_join(directory: Path, name: str) -> Path:
     dest = directory / base
 
     # Defense in depth: confirm the resolved path stays inside `directory`.
-    directory_resolved = directory.resolve()
-    if os.path.commonpath([directory_resolved, dest.resolve()]) != str(directory_resolved):
+    if not dest.resolve().is_relative_to(directory.resolve()):
         raise ValueError(f"refusing to write {name!r} outside {directory}")
 
     return dest
