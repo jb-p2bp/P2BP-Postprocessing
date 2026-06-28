@@ -21,7 +21,6 @@ Optional:
 
 import os
 import shutil
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -35,12 +34,15 @@ from botocore.config import Config
 # --- Configuration -----------------------------------------------------------
 
 
+class ConfigError(RuntimeError):
+    """Raised when required configuration (e.g. an env var) is missing."""
+
+
 def require_env(name: str) -> str:
     value = os.getenv(name)
 
     if not value:
-        print(f"Missing required environment variable: {name}")
-        sys.exit(1)
+        raise ConfigError(f"Missing required environment variable: {name}")
 
     return value
 
