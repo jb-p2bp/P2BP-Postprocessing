@@ -174,13 +174,14 @@ def _sanitize(label: str) -> str:
 
 def download_object(
     client: BaseClient,
-    bucket: str,
     key: str,
     dest: Path,
+    bucket: Optional[str] = None,
     overwrite: bool = False,
 ) -> Path:
     """Download a single R2 object to `dest` (a full file path).
 
+    `bucket` defaults to the R2_BUCKET environment variable when omitted.
     Parent directories are created as needed. Returns the destination path.
 
     Refuses to clobber an existing file unless `overwrite=True`, so a key
@@ -188,6 +189,7 @@ def download_object(
     error instead of silently destroying the earlier download.
     """
 
+    bucket = bucket or default_bucket()
     dest.parent.mkdir(parents=True, exist_ok=True)
     if not overwrite and dest.exists():
         raise FileExistsError(
@@ -199,37 +201,39 @@ def download_object(
 
 def download_to_dir(
     client: BaseClient,
-    bucket: str,
     key: str,
     directory: Path,
+    bucket: Optional[str] = None,
     filename: Optional[str] = None,
     overwrite: bool = False,
 ) -> Path:
     """Download an object into `directory`, returning the written file path.
 
-    By default the filename is the last path segment of the key. Two keys
-    sharing that segment would map to the same local file; the download
-    refuses to overwrite an existing one unless `overwrite=True`.
+    `bucket` defaults to the R2_BUCKET environment variable when omitted. By
+    default the filename is the last path segment of the key. Two keys sharing
+    that segment would map to the same local file; the download refuses to
+    overwrite an existing one unless `overwrite=True`.
     """
 
     dest = _safe_join(directory, filename or key)
-    return download_object(client, bucket, key, dest, overwrite=overwrite)
+    return download_object(client, key, dest, bucket=bucket, overwrite=overwrite)
 
 
 def download_to_temp(
     client: BaseClient,
-    bucket: str,
     key: str,
+    bucket: Optional[str] = None,
     label: Optional[str] = None,
 ) -> Path:
     """Download an object into a fresh, unique temp directory.
 
-    The caller owns the returned file and its parent directory and is
-    responsible for cleanup. Use `temp_download_dir` instead when you want
-    automatic removal.
+    `bucket` defaults to the R2_BUCKET environment variable when omitted. The
+    caller owns the returned file and its parent directory and is responsible
+    for cleanup. Use `temp_download_dir` instead when you want automatic
+    removal.
     """
 
-    return download_to_dir(client, bucket, key, new_download_dir(label))
+    return download_to_dir(client, key, new_download_dir(label), bucket=bucket)
 
 
 def _safe_join(directory: Path, name: str) -> Path:
