@@ -174,10 +174,8 @@ def process_message(body: Any) -> None:
     and considered permanently completed.
     """
 
-    logger.info("Processing message:")
-
-    # Replace this with real logic
-    logger.info(json.dumps(body, indent=2))
+    # Avoid logging the full payload because it may contain sensitive data.
+    logger.info("Processing message with body type: %s", type(body).__name__)
 
     # Example contract enforcement (optional but recommended):
     # if something fails:
@@ -207,9 +205,9 @@ def main():
 
     consecutive_poll_failures = 0
     consecutive_processing_failures = 0
-    start_time = time.time()
+    start_time = time.monotonic()
 
-    last_completed_work_time = time.time()
+    last_completed_work_time = time.monotonic()
 
     logger.info("Queue worker started")
     logger.info(
@@ -220,7 +218,7 @@ def main():
 
     while running:
 
-        if time.time() - start_time > MAX_RUNTIME_SECONDS:
+        if time.monotonic() - start_time > MAX_RUNTIME_SECONDS:
             logger.warning("Max runtime reached. Shutting down.")
             ensure_shutdown("maximum runtime reached")
 
@@ -240,7 +238,7 @@ def main():
             consecutive_poll_failures = 0
 
             if not messages:
-                idle_for = time.time() - last_completed_work_time
+                idle_for = time.monotonic() - last_completed_work_time
 
                 logger.info(f"No messages. Idle since last work: {idle_for:.0f}s")
 
@@ -271,7 +269,7 @@ def main():
             ack_message(client, queue_id, account_id, lease_id)
             logger.info("Message acknowledged.")
 
-            last_completed_work_time = time.time()
+            last_completed_work_time = time.monotonic()
             consecutive_processing_failures = 0
 
         except Exception as e:
@@ -283,11 +281,11 @@ def main():
                 active_failures = consecutive_processing_failures
 
             backoff = min(
-                POLL_INTERVAL_SECONDS * (2 ** (active_failures - 1)),
+                POLL_INTERVAL_SECONDS
+                * (2 ** (active_failures - 1))
+                * random.uniform(0.8, 1.2),
                 MAX_BACKOFF_SECONDS,
             )
-
-            backoff *= random.uniform(0.8, 1.2)
 
             logger.exception(
                 f"{failure_stage.capitalize()} error "
