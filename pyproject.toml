@@ -25,6 +25,7 @@ include = ["config.py", "pull_queue.py", "r2.py"]
 dev = [
     "pytest>=9.1.1",
     "pytest-randomly>=4.1.0",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.pytest.ini_options]
