@@ -3,20 +3,20 @@ import pytest
 
 
 def test_require_env_returns_value(monkeypatch):
-    monkeypatch.setenv("SOME_VAR", "value")
-    assert config.require_env("SOME_VAR") == "value"
+    monkeypatch.setenv("P2BP_TEST_VAR", "value")
+    assert config.require_env("P2BP_TEST_VAR") == "value"
 
 
 def test_require_env_missing_raises(monkeypatch):
-    monkeypatch.delenv("SOME_VAR", raising=False)
+    monkeypatch.delenv("P2BP_TEST_VAR", raising=False)
     with pytest.raises(config.ConfigError):
-        config.require_env("SOME_VAR")
+        config.require_env("P2BP_TEST_VAR")
 
 
 def test_require_env_empty_string_is_missing(monkeypatch):
-    monkeypatch.setenv("SOME_VAR", "")
+    monkeypatch.setenv("P2BP_TEST_VAR", "")
     with pytest.raises(config.ConfigError):
-        config.require_env("SOME_VAR")
+        config.require_env("P2BP_TEST_VAR")
 
 
 def test_config_error_is_runtime_error():

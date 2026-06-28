@@ -5,8 +5,6 @@ R2-related env var is cleared, and the temp-download base is redirected under
 pytest's per-test `tmp_path` so nothing touches the real system temp directory.
 """
 
-import os
-
 import pytest
 
 R2_ENV_VARS = (
