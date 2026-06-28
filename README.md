@@ -166,7 +166,9 @@ Secret for the R2 API token above.
 
 ### R2_BUCKET
 
-Optional. Default R2 bucket, so upload and download calls can omit the bucket argument.
+Default R2 bucket, so upload and download calls can omit the bucket argument.
+Required unless every call passes an explicit bucket argument — when omitted, the
+transfer helpers fall back to this variable and raise `ConfigError` if it is unset.
 
 ### P2BP_TMP_DIR
 

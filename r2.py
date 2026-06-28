@@ -13,7 +13,10 @@ Required environment variables:
 
 Optional:
 
-    R2_BUCKET               Default bucket, so callers can omit it.
+    R2_BUCKET               Default bucket. Required unless every call passes an
+                            explicit `bucket=` argument: when omitted, the
+                            transfer helpers fall back to this var and raise
+                            ConfigError if it too is unset.
     P2BP_TMP_DIR            Base directory for temporary downloads. Must be an
                             absolute path. Defaults to "<system temp>/p2bp-tmp"
                             (i.e. /tmp/p2bp-tmp on the EC2 Linux host).
