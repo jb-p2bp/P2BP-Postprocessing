@@ -209,7 +209,7 @@ def main():
     consecutive_processing_failures = 0
     start_time = time.time()
 
-    last_successful_ack_time = time.time()
+    last_completed_work_time = time.time()
 
     logger.info("Queue worker started")
     logger.info(
@@ -240,7 +240,7 @@ def main():
             consecutive_poll_failures = 0
 
             if not messages:
-                idle_for = time.time() - last_successful_ack_time
+                idle_for = time.time() - last_completed_work_time
 
                 logger.info(f"No messages. Idle since last work: {idle_for:.0f}s")
 
@@ -271,7 +271,7 @@ def main():
             ack_message(client, queue_id, account_id, lease_id)
             logger.info("Message acknowledged.")
 
-            last_successful_ack_time = time.time()
+            last_completed_work_time = time.time()
             consecutive_processing_failures = 0
 
         except Exception as e:
