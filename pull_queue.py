@@ -229,6 +229,38 @@ def ack_message(client, queue_id, account_id, lease_id: str) -> None:
     )
 
 
+def pull_one(client, queue_id: str, account_id: str) -> list:
+    """Pull a single message from the queue, returning a (possibly empty) list."""
+    pull_response = client.queues.messages.pull(
+        queue_id,
+        account_id=account_id,
+        batch_size=1,
+        visibility_timeout_ms=30_000,
+    )
+    return getattr(pull_response, "messages", [])
+
+
+def handle_message(client, queue_id: str, account_id: str, message: Any) -> None:
+    """Process a single message and ack it only on success.
+
+    Raises on any failure so the caller can record a processing failure and
+    leave the message un-acked for redelivery.
+    """
+    body = parse_body(message.body)
+    lease_id = getattr(message, "lease_id", None)
+
+    if not lease_id:
+        raise RuntimeError("Pulled message is missing lease_id")
+
+    # PROCESS (MUST RAISE ON FAILURE)
+    process_message(body)
+
+    # ACK ONLY ON SUCCESS
+    logger.info("Acknowledging message...")
+    ack_message(client, queue_id, account_id, lease_id)
+    logger.info("Message acknowledged.")
+
+
 # =========================
 # MAIN LOOP
 # =========================
@@ -276,14 +308,7 @@ def main() -> None:
         try:
             logger.debug("Polling queue...")
 
-            pull_response = client.queues.messages.pull(
-                queue_id,
-                account_id=account_id,
-                batch_size=1,
-                visibility_timeout_ms=30_000,
-            )
-
-            messages = getattr(pull_response, "messages", [])
+            messages = pull_one(client, queue_id, account_id)
             consecutive_poll_failures = 0
 
             if not messages:
@@ -291,32 +316,32 @@ def main() -> None:
 
                 logger.info(f"No messages. Idle since last work: {idle_for:.0f}s")
 
-                if idle_for >= IDLE_LIMIT_SECONDS:
-                    logger.warning("Idle limit reached. Shutting down EC2...")
+                if idle_for < IDLE_LIMIT_SECONDS:
+                    time.sleep(POLL_INTERVAL_SECONDS)
+                    continue
+
+                # Final confirming poll before stopping. This closes the window
+                # between observing an empty queue and the asynchronous
+                # stop_instances call: a producer can enqueue in that gap and,
+                # because the instance still appears "on", nothing else would
+                # start a worker to pick the message up. If the confirming poll
+                # is also empty we stop; otherwise we process the new message.
+                logger.warning(
+                    "Idle limit reached. Performing a final confirming poll..."
+                )
+                messages = pull_one(client, queue_id, account_id)
+
+                if not messages:
+                    logger.warning("Queue confirmed empty. Shutting down EC2...")
                     ensure_shutdown("idle limit reached", instance_id, region)
 
-                time.sleep(POLL_INTERVAL_SECONDS)
-                continue
+                logger.info(
+                    "Message arrived during idle confirmation; "
+                    "processing instead of shutting down."
+                )
 
             failure_stage = "processing"
-            message = messages[0]
-            body = parse_body(message.body)
-            lease_id = getattr(message, "lease_id", None)
-
-            if not lease_id:
-                raise RuntimeError("Pulled message is missing lease_id")
-
-            # =========================
-            # PROCESS (MUST RAISE ON FAILURE)
-            # =========================
-            process_message(body)
-
-            # =========================
-            # ACK ONLY ON SUCCESS
-            # =========================
-            logger.info("Acknowledging message...")
-            ack_message(client, queue_id, account_id, lease_id)
-            logger.info("Message acknowledged.")
+            handle_message(client, queue_id, account_id, messages[0])
 
             last_completed_work_time = time.monotonic()
             consecutive_processing_failures = 0
