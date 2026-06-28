@@ -249,6 +249,22 @@ def _sanitize(label: str) -> str:
 # --- Downloads ---------------------------------------------------------------
 
 
+def _log_transfer_size(verb: str, path: Path) -> None:
+    """Debug-log the size of a just-transferred file, defensively.
+
+    The transfer already succeeded, so a concurrent removal of `path` must not
+    turn that success into an error: a failed stat is logged as -1 bytes.
+    """
+
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = -1
+    logger.debug("%s %s (%d bytes)", verb, path, size)
+
+
 def download_object(
     client: BaseClient,
     key: str,
@@ -274,14 +290,7 @@ def download_object(
         )
     logger.info("Downloading r2://%s/%s -> %s", bucket, key, dest)
     client.download_file(bucket, key, str(dest))
-    if logger.isEnabledFor(logging.DEBUG):
-        # Read the size defensively: the download already succeeded, so a
-        # concurrent removal of dest must not turn that success into an error.
-        try:
-            size = dest.stat().st_size
-        except OSError:
-            size = -1
-        logger.debug("Downloaded %s (%d bytes)", dest, size)
+    _log_transfer_size("Downloaded", dest)
     return dest
 
 
@@ -377,14 +386,7 @@ def upload_object(
         )
     logger.info("Uploading %s -> r2://%s/%s", source, bucket, key)
     client.upload_file(str(source), bucket, key)
-    if logger.isEnabledFor(logging.DEBUG):
-        # Mirror the download-side debug log: the upload already succeeded, so a
-        # concurrent removal of source must not turn that success into an error.
-        try:
-            size = source.stat().st_size
-        except OSError:
-            size = -1
-        logger.debug("Uploaded %s (%d bytes)", source, size)
+    _log_transfer_size("Uploaded", source)
     return key
 
 
