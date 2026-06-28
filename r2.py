@@ -14,9 +14,9 @@ Required environment variables:
 Optional:
 
     R2_BUCKET               Default bucket, so callers can omit it.
-    P2BP_TMP_DIR            Base directory for temporary downloads. Defaults
-                            to "<system temp>/p2bp-tmp" (i.e. /tmp/p2bp-tmp
-                            on the EC2 Linux host).
+    P2BP_TMP_DIR            Base directory for temporary downloads. Must be an
+                            absolute path. Defaults to "<system temp>/p2bp-tmp"
+                            (i.e. /tmp/p2bp-tmp on the EC2 Linux host).
 """
 
 import os
@@ -31,7 +31,7 @@ import boto3
 from botocore.client import BaseClient
 from botocore.config import Config
 
-from config import require_env
+from config import ConfigError, require_env
 
 
 # --- Configuration -----------------------------------------------------------
@@ -76,8 +76,18 @@ def default_bucket() -> str:
 
 
 def tmp_base_dir() -> Path:
-    base = os.getenv("P2BP_TMP_DIR") or os.path.join(tempfile.gettempdir(), "p2bp-tmp")
-    return Path(base)
+    override = os.getenv("P2BP_TMP_DIR")
+    if override:
+        # A relative override would be resolved against the process's cwd at
+        # call time, so the "stable base" would silently move if the worker
+        # ever chdir'd. Require an absolute path rather than guess an anchor.
+        if not os.path.isabs(override):
+            raise ConfigError(
+                f"P2BP_TMP_DIR must be an absolute path, got {override!r}"
+            )
+        return Path(override)
+
+    return Path(tempfile.gettempdir()) / "p2bp-tmp"
 
 
 def r2_downloads_dir() -> Path:
