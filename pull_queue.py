@@ -34,11 +34,6 @@ running = True
 # LOGGING
 # =========================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
-
 logger = logging.getLogger("queue-worker")
 
 
@@ -52,8 +47,18 @@ def handle_signal(signum, frame):
     running = False
 
 
-signal.signal(signal.SIGTERM, handle_signal)
-signal.signal(signal.SIGINT, handle_signal)
+def configure_runtime() -> None:
+    """Apply process-global side effects.
+
+    Kept out of module import so the module can be imported (e.g. by tests)
+    without reconfiguring logging or replacing the process signal handlers.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+    )
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
 
 
 # =========================
@@ -222,7 +227,9 @@ def ack_message(client, queue_id, account_id, lease_id: str) -> None:
 # MAIN LOOP
 # =========================
 
-def main():
+def main() -> None:
+    configure_runtime()
+
     account_id = require_env("CLOUDFLARE_ACCOUNT_ID")
     queue_id = require_env("CLOUDFLARE_QUEUE_ID")
     api_token = require_env("CLOUDFLARE_API_TOKEN")
