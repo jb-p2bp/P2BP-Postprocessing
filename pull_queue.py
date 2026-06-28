@@ -42,7 +42,7 @@ def main() -> None:
         queue_id,
         account_id=account_id,
         batch_size=1,
-        visibility_timeout=30_000,
+        visibility_timeout_ms=30_000,
     )
 
     messages = pull_response.messages or []
