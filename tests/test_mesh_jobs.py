@@ -150,6 +150,26 @@ class TestMeshRefineJob:
 
 
 class TestParseMeshJobMessage:
+    def test_round_trips_through_serialization(self) -> None:
+        original = MeshGenerateJob(
+            organizationId="org",
+            projectId="proj",
+            zoneScanObjectKeys=["a/b.zip", "c/d.zip"],
+        )
+
+        dumped = original.model_dump()
+
+        # The serialized payload keeps the camelCase wire field names...
+        assert set(dumped) == {
+            "type",
+            "version",
+            "organizationId",
+            "projectId",
+            "zoneScanObjectKeys",
+        }
+        # ...and parses back into an equal model.
+        assert parse_mesh_job_message(dumped) == original
+
     def test_parses_generate_variant(self) -> None:
         result = parse_mesh_job_message(
             {
