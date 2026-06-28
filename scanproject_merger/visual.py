@@ -28,7 +28,11 @@ class _Features:
     image_points: NDArray[np.float32]
 
 
-_FEATURE_CACHE: dict[str, _Features | None] = {}
+# Maps a resolved scan path to its extracted features (or None when a scan has
+# no usable keyframes). Scoped to a single registration run by the caller rather
+# than held in module-global state, so it cannot leak memory or stale features
+# across jobs and is safe to use from concurrent runs.
+FeatureCache = dict[str, "_Features | None"]
 
 
 def _matrix(values: list[float], size: int) -> NDArray[np.float64]:
@@ -36,18 +40,18 @@ def _matrix(values: list[float], size: int) -> NDArray[np.float64]:
     return np.asarray(values, dtype=np.float64).reshape((size, size), order="F")
 
 
-def _extract(project: ScanProject, maximum_keyframes: int = 120) -> _Features | None:
+def _extract(project: ScanProject, cache: FeatureCache, maximum_keyframes: int = 120) -> _Features | None:
     cache_key = str(project.path.resolve())
-    if cache_key in _FEATURE_CACHE:
-        return _FEATURE_CACHE[cache_key]
+    if cache_key in cache:
+        return cache[cache_key]
     metadata_path = project.path / "keyframes.json"
     if not metadata_path.is_file():
-        _FEATURE_CACHE[cache_key] = None
+        cache[cache_key] = None
         return None
     frames = json.loads(metadata_path.read_text(encoding="utf-8"))
     frames = [frame for frame in frames if frame.get("sceneDepthPayload")]
     if not frames:
-        _FEATURE_CACHE[cache_key] = None
+        cache[cache_key] = None
         return None
     if len(frames) > maximum_keyframes:
         indices = np.linspace(0, len(frames) - 1, maximum_keyframes, dtype=int)
@@ -73,7 +77,7 @@ def _extract(project: ScanProject, maximum_keyframes: int = 120) -> _Features | 
         frame_indices.append(np.full(len(keypoints), frame_index, dtype=np.int32))
         image_points.append(np.asarray([point.pt for point in keypoints], dtype=np.float32) / scale)
     if not descriptors:
-        _FEATURE_CACHE[cache_key] = None
+        cache[cache_key] = None
         return None
     result = _Features(
         usable_frames,
@@ -81,7 +85,7 @@ def _extract(project: ScanProject, maximum_keyframes: int = 120) -> _Features | 
         np.concatenate(frame_indices),
         np.concatenate(image_points),
     )
-    _FEATURE_CACHE[cache_key] = result
+    cache[cache_key] = result
     return result
 
 
@@ -127,11 +131,19 @@ def register_keyframes(
     moving: ScanProject,
     fixed_initial: NDArray[np.float64],
     moving_initial: NDArray[np.float64],
+    *,
+    cache: FeatureCache | None = None,
     minimum_inliers: int = 20,
     ransac_threshold: float = 0.20,
 ) -> VisualRegistration | None:
-    """Estimate a projected moving-to-fixed transform from RGB matches with metric depth."""
-    fixed_features, moving_features = _extract(fixed), _extract(moving)
+    """Estimate a projected moving-to-fixed transform from RGB matches with metric depth.
+
+    ``cache`` lets a caller reuse extracted features across pairs within one
+    registration run; when omitted a fresh, call-local cache is used.
+    """
+    if cache is None:
+        cache = {}
+    fixed_features, moving_features = _extract(fixed, cache), _extract(moving, cache)
     if fixed_features is None or moving_features is None:
         return None
     matcher = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=64))

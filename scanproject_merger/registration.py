@@ -12,7 +12,7 @@ from scipy.optimize import least_squares
 from scipy.spatial import cKDTree
 
 from .format import ScanProject, transform_points
-from .visual import register_keyframes
+from .visual import FeatureCache, register_keyframes
 
 
 @dataclass
@@ -310,6 +310,7 @@ def register_scans(
 ) -> RegistrationResult:
     scans = prepare_scans(projects, voxel_size, minimum_confidence)
     edges: list[RegistrationEdge] = []
+    feature_cache: FeatureCache = {}  # Reuse keyframe features across pairs within this run only.
     for fixed, moving in candidate_pairs(scans, candidate_padding):
         visual = (
             register_keyframes(
@@ -317,6 +318,7 @@ def register_scans(
                 scans[moving].project,
                 scans[fixed].initial_transform,
                 scans[moving].initial_transform,
+                cache=feature_cache,
             )
             if use_visual_registration
             else None
