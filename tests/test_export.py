@@ -37,6 +37,20 @@ def test_exports_each_transformed_source_without_deduplication(tmp_path: Path):
     np.testing.assert_allclose(cloud.x, [500_000, 500_001, 500_001, 500_002])
 
 
+def test_exports_empty_cloud_when_confidence_filter_removes_all_points(tmp_path: Path):
+    path = make_project(tmp_path / "one.scanproject", np.array([[0, 0, 0], [1, 2, 3], [2, 4, 6]]))
+    scan = ScanProject.open(path)
+    prepared = prepare_scans([scan], voxel_size=0.01, minimum_confidence=0)
+    result = RegistrationResult(prepared, [np.eye(4)], [])
+    output = tmp_path / "empty.laz"
+
+    # A confidence threshold above every point's confidence filters them all out.
+    assert export_merged_cloud(result, output, minimum_confidence=5, deduplicate_voxel=0) == 0
+
+    cloud = laspy.read(output)
+    assert len(cloud.points) == 0
+
+
 def test_exports_each_original_source_as_laz(tmp_path: Path):
     path = make_project(
         tmp_path / "B1-one.scanproject",

@@ -24,7 +24,9 @@ def _write_cloud(
 ) -> None:
     header = laspy.LasHeader(point_format=7, version="1.4")  # LAS 1.4 format 7 supports RGB.
     header.scales = np.array([0.001, 0.001, 0.001])  # Store coordinates at 1 mm resolution.
-    header.offsets = xyz.min(axis=0)
+    # An all-filtered scan yields no points; fall back to a zero origin so the
+    # empty cloud still writes instead of crashing on min() of an empty array.
+    header.offsets = xyz.min(axis=0) if len(xyz) else np.zeros(3)
     header.add_crs(CRS.from_epsg(epsg))
     header.add_extra_dim(laspy.ExtraBytesParams(name="confidence", type=np.uint8))
     header.add_extra_dim(laspy.ExtraBytesParams(name="source_id", type=np.uint16))
