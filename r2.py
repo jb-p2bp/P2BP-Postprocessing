@@ -30,21 +30,10 @@ import boto3
 from botocore.client import BaseClient
 from botocore.config import Config
 
+from config import require_env
+
 
 # --- Configuration -----------------------------------------------------------
-
-
-class ConfigError(RuntimeError):
-    """Raised when required configuration (e.g. an env var) is missing."""
-
-
-def require_env(name: str) -> str:
-    value = os.getenv(name)
-
-    if not value:
-        raise ConfigError(f"Missing required environment variable: {name}")
-
-    return value
 
 
 def r2_endpoint_url(account_id: str) -> str:
