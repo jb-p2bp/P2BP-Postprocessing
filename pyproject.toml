@@ -11,6 +11,7 @@ dependencies = [
     "lazrs>=0.6.3",
     "numpy>=2.0.0",
     "opencv-python-headless>=4.11.0.86",
+    "pydantic>=2.13.4",
     "pyproj>=3.7.0",
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
