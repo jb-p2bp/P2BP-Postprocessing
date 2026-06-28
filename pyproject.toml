@@ -20,3 +20,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 include = ["config.py", "pull_queue.py", "r2.py"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
