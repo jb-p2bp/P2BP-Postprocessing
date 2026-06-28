@@ -1,4 +1,4 @@
-"""Utilities for downloading objects from Cloudflare R2.
+"""Utilities for uploading objects to and downloading objects from Cloudflare R2.
 
 R2 exposes an S3-compatible API, so we use boto3 (already a project
 dependency) pointed at the account's R2 endpoint rather than the
@@ -26,9 +26,11 @@ Exceptions raised:
     InsecureTempDirError    A temp directory failed its safety checks (symlink,
                             foreign owner, or not a directory) -- a possible
                             hijack.
-    FileExistsError         The download target already exists and overwrite is
+    FileExistsError         A download target already exists, or an upload would
+                            replace an existing R2 object, and overwrite is
                             False.
-    ValueError              A key/filename yields no safe local name.
+    ValueError              A key/filename yields no safe local name, or an R2
+                            object key is degenerate (empty, "." or "..").
 """
 
 import logging
@@ -44,6 +46,7 @@ from collections.abc import Iterator
 import boto3
 from botocore.client import BaseClient
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from config import ConfigError, require_env
 
@@ -58,6 +61,8 @@ __all__ = [
     "download_to_temp",
     "new_download_dir",
     "temp_download_dir",
+    "upload_from_dir",
+    "upload_object",
 ]
 
 
@@ -337,3 +342,97 @@ def _safe_join(directory: Path, name: str) -> Path:
         raise ValueError(f"refusing to write {name!r} outside {directory}")
 
     return dest
+
+
+# --- Uploads -----------------------------------------------------------------
+
+
+def upload_object(
+    client: BaseClient,
+    source: Path,
+    key: str,
+    bucket: str | None = None,
+    overwrite: bool = False,
+) -> str:
+    """Upload a single local file to R2 under `key`, returning the key.
+
+    `bucket` defaults to the R2_BUCKET environment variable when omitted. R2
+    objects are silently overwritten by default, so this refuses to replace an
+    existing object unless `overwrite=True` -- a key collision (two files
+    mapping to the same object) then surfaces as an error instead of quietly
+    destroying the earlier upload. The existence check is a HEAD request; like
+    the download-side clobber check it is racy against concurrent writers, which
+    we accept for the same reason.
+    """
+
+    bucket = bucket or default_bucket()
+    _safe_key(key)
+    if not overwrite and _object_exists(client, bucket, key):
+        raise FileExistsError(
+            f"r2://{bucket}/{key} already exists; pass overwrite=True to replace it"
+        )
+    logger.info("Uploading %s -> r2://%s/%s", source, bucket, key)
+    client.upload_file(str(source), bucket, key)
+    if logger.isEnabledFor(logging.DEBUG):
+        # Mirror the download-side debug log: the upload already succeeded, so a
+        # concurrent removal of source must not turn that success into an error.
+        try:
+            size = source.stat().st_size
+        except OSError:
+            size = -1
+        logger.debug("Uploaded %s (%d bytes)", source, size)
+    return key
+
+
+def upload_from_dir(
+    client: BaseClient,
+    directory: Path,
+    filename: str,
+    key: str,
+    bucket: str | None = None,
+    overwrite: bool = False,
+) -> str:
+    """Upload `directory`/`filename` to R2 under `key`, returning the key.
+
+    `bucket` defaults to the R2_BUCKET environment variable when omitted. `key`
+    is always required -- unlike `download_to_dir` (which derives the local name
+    from the key), the remote object key is never inferred from the filename.
+    `_safe_join` is reused so an absolute path or ".." traversal in `filename`
+    cannot read outside `directory`.
+    """
+
+    source = _safe_join(directory, filename)
+    return upload_object(client, source, key, bucket=bucket, overwrite=overwrite)
+
+
+def _object_exists(client: BaseClient, bucket: str, key: str) -> bool:
+    """Return True if R2 has an object at `bucket`/`key`.
+
+    Uses HEAD, so it never transfers the object body. A 404/NotFound is the
+    "absent" answer; any other ClientError is re-raised so real failures
+    (permissions, network, bucket missing) are not misread as "safe to upload".
+    """
+
+    try:
+        client.head_object(Bucket=bucket, Key=key)
+    except ClientError as error:
+        code = error.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NotFound"):
+            return False
+        raise
+    return True
+
+
+def _safe_key(key: str) -> str:
+    """Validate `key` as an R2 object key, refusing degenerate values.
+
+    R2 keys are opaque strings and may contain "/" (the conventional prefix
+    separator) and most other characters, but an empty key -- or "."/".." as
+    the whole key -- is almost certainly a mistake. Raise ValueError rather
+    than quietly creating an oddly-named object, matching `_safe_join`'s
+    treatment of degenerate local names.
+    """
+
+    if key in ("", ".", ".."):
+        raise ValueError(f"cannot use {key!r} as an R2 object key")
+    return key
