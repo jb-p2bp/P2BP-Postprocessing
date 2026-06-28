@@ -196,9 +196,17 @@ def process_message(body: Any) -> None:
     # Avoid logging the full payload because it may contain sensitive data.
     logger.info("Processing message with body type: %s", type(body).__name__)
 
-    # Example contract enforcement (optional but recommended):
-    # if something fails:
-    #     raise Exception("processing failed")
+    # ----------------------------------------------------------------------
+    # TODO: IMPLEMENT REAL MESSAGE PROCESSING HERE.
+    #
+    # WARNING: This function is currently a no-op. Because it returns without
+    # raising, the caller will ACK every message, which PERMANENTLY DELETES it
+    # from the queue without doing any work. Do not run this against a queue
+    # carrying real messages until processing is implemented.
+    #
+    # Contract reminder when implementing: raise on failure (so the message is
+    # retried), return normally only on success (so the message is acked).
+    # ----------------------------------------------------------------------
 
 
 def ack_message(client, queue_id, account_id, lease_id: str) -> None:
