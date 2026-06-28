@@ -20,6 +20,7 @@ Optional:
 """
 
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -37,7 +38,18 @@ from config import ConfigError, require_env
 # --- Configuration -----------------------------------------------------------
 
 
+_ACCOUNT_ID_RE = re.compile(r"[0-9a-f]{32}")
+
+
 def r2_endpoint_url(account_id: str) -> str:
+    # Account ids are interpolated into the endpoint host, so reject anything
+    # that isn't a Cloudflare account id (32 lowercase hex chars) to avoid a
+    # malformed value redirecting the host/path.
+    if not _ACCOUNT_ID_RE.fullmatch(account_id):
+        raise ConfigError(
+            f"CLOUDFLARE_ACCOUNT_ID must be 32 lowercase hex characters, "
+            f"got {account_id!r}"
+        )
     return f"https://{account_id}.r2.cloudflarestorage.com"
 
 
