@@ -217,3 +217,99 @@ def test_download_to_temp_fresh_dir(fake_client):
     result = r2.download_to_temp(fake_client, "scans/x.las", bucket="b")
     assert result.name == "x.las"
     assert result.exists()
+    # Its contract: a fresh unique dir directly under the downloads root.
+    assert result.parent.parent == r2._r2_downloads_dir()
+
+
+def test_download_object_creates_parent_dirs(fake_client, tmp_path):
+    dest = tmp_path / "sub" / "nested" / "a.bin"
+    r2.download_object(fake_client, "k", dest, bucket="b")
+    assert dest.exists()
+
+
+def test_download_to_dir_filename_override(fake_client, tmp_path):
+    result = r2.download_to_dir(
+        fake_client, "scans/a.las", tmp_path, bucket="b", filename="renamed.las"
+    )
+    assert result == tmp_path / "renamed.las"
+    assert result.exists()
+
+
+def test_download_to_dir_overwrite_passthrough(fake_client, tmp_path):
+    r2.download_to_dir(fake_client, "2024/scan.las", tmp_path, bucket="b")
+    # Same basename would collide; overwrite must thread through to download_object.
+    r2.download_to_dir(fake_client, "2025/scan.las", tmp_path, bucket="b", overwrite=True)
+    assert (tmp_path / "scan.las").exists()
+
+
+# --- client / config ---------------------------------------------------------
+
+
+def test_create_r2_client_missing_account_id_raises(monkeypatch):
+    monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
+    with pytest.raises(config.ConfigError):
+        r2.create_r2_client()
+
+
+def test_create_r2_client_builds_endpoint(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", VALID_ACCOUNT_ID)
+    monkeypatch.setenv("R2_ACCESS_KEY_ID", "ak")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "sk")
+    captured = {}
+
+    def fake_boto_client(service, **kwargs):
+        captured["service"] = service
+        captured.update(kwargs)
+        return "CLIENT"
+
+    monkeypatch.setattr(r2.boto3, "client", fake_boto_client)
+
+    assert r2.create_r2_client() == "CLIENT"
+    assert captured["service"] == "s3"
+    assert (
+        captured["endpoint_url"]
+        == f"https://{VALID_ACCOUNT_ID}.r2.cloudflarestorage.com"
+    )
+    assert captured["region_name"] == "auto"
+    assert captured["aws_access_key_id"] == "ak"
+    assert captured["aws_secret_access_key"] == "sk"
+
+
+def test_default_bucket_from_env(monkeypatch):
+    monkeypatch.setenv("R2_BUCKET", "my-bucket")
+    assert r2.default_bucket() == "my-bucket"
+
+
+def test_default_bucket_missing_raises(monkeypatch):
+    monkeypatch.delenv("R2_BUCKET", raising=False)
+    with pytest.raises(config.ConfigError):
+        r2.default_bucket()
+
+
+# --- misc helpers ------------------------------------------------------------
+
+
+def test_safe_join_normalizes_backslashes(tmp_path):
+    assert r2._safe_join(tmp_path, "a\\b\\c.las") == tmp_path / "c.las"
+
+
+def test_insecure_temp_dir_error_is_runtime_error():
+    assert issubclass(r2.InsecureTempDirError, RuntimeError)
+
+
+def test_ensure_private_dir_rejects_regular_file(tmp_path):
+    target = tmp_path / "afile"
+    target.write_text("not a dir")
+    with pytest.raises(FileExistsError):
+        r2._ensure_private_dir(target)
+
+
+def test_temp_download_dir_cleans_up_on_exception():
+    saved = None
+    with pytest.raises(RuntimeError):
+        with r2.temp_download_dir() as path:
+            saved = path
+            assert path.exists()
+            raise RuntimeError("boom")
+    assert saved is not None
+    assert not saved.exists()
