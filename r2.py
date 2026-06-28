@@ -19,6 +19,7 @@ Optional:
                             (i.e. /tmp/p2bp-tmp on the EC2 Linux host).
 """
 
+import logging
 import os
 import re
 import shutil
@@ -33,6 +34,8 @@ from botocore.client import BaseClient
 from botocore.config import Config
 
 from config import ConfigError, require_env
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "InsecureTempDirError",
@@ -241,7 +244,9 @@ def download_object(
         raise FileExistsError(
             f"{dest} already exists; pass overwrite=True to replace it"
         )
+    logger.info("Downloading r2://%s/%s -> %s", bucket, key, dest)
     client.download_file(bucket, key, str(dest))
+    logger.debug("Downloaded %s (%d bytes)", dest, dest.stat().st_size)
     return dest
 
 
