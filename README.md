@@ -19,7 +19,9 @@ This repository serves as the foundation for future point cloud processing and m
 
 ```text
 .
+├── config.py
 ├── pull_queue.py
+├── r2.py
 ├── pyproject.toml
 ├── uv.lock
 └── README.md
@@ -37,6 +39,21 @@ Responsibilities:
 * Pull messages from the configured queue
 * Display message contents
 * Acknowledge messages
+
+### r2.py
+
+Utilities for downloading objects from Cloudflare R2 (S3-compatible, via boto3).
+
+Responsibilities:
+
+* Build an R2 client from the environment
+* Download objects to a given path, directory, or a unique temp directory
+* Manage collision-free, private temp download directories
+
+### config.py
+
+Shared configuration helpers (`require_env`, `ConfigError`) used by the other
+modules to read required environment variables.
 
 ### pyproject.toml
 
@@ -97,13 +114,19 @@ Create a `.env` file in the repository root:
 CLOUDFLARE_ACCOUNT_ID=
 CLOUDFLARE_QUEUE_ID=
 CLOUDFLARE_API_TOKEN=
+
+# R2 (object downloads)
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET=
 ```
 
 ## Environment Variables
 
 ### CLOUDFLARE_ACCOUNT_ID
 
-Cloudflare Account ID that owns the queue.
+Cloudflare Account ID that owns the queue. Also used to build the R2 endpoint
+URL, so it must be the 32-character hex account id.
 
 ### CLOUDFLARE_QUEUE_ID
 
@@ -131,6 +154,24 @@ Required permissions:
 
 * Queues Read
 * Queues Write
+
+### R2_ACCESS_KEY_ID
+
+Access key id of an R2 API token (used to download objects from R2).
+
+### R2_SECRET_ACCESS_KEY
+
+Secret for the R2 API token above.
+
+### R2_BUCKET
+
+Optional. Default R2 bucket, so download calls can omit the bucket argument.
+
+### P2BP_TMP_DIR
+
+Optional. Base directory for temporary downloads. Must be an **absolute** path,
+and its parent directory must already exist. Defaults to `<system temp>/p2bp-tmp`
+(i.e. `/tmp/p2bp-tmp` on the EC2 Linux host).
 
 ---
 
@@ -246,7 +287,6 @@ Planned additions include:
 
 * Continuous queue polling
 * Automatic EC2 shutdown after inactivity
-* Cloudflare R2 downloads
 * Point cloud meshing
 * Cloudflare R2 uploads
 
