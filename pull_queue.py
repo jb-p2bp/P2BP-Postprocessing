@@ -152,10 +152,13 @@ def ensure_shutdown(
             )
 
             # Keep the process alive so a supervisor cannot restart it during
-            # the asynchronous EC2 stop window. Restore default signal handling
-            # so the operating system can terminate it during shutdown.
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
-            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            # the asynchronous EC2 stop window. Ignore SIGTERM/SIGINT here:
+            # absorbing a supervisor's stop signal prevents it from observing
+            # an exit and launching a replacement worker on an instance that is
+            # already stopping. The OS still terminates us at the end of its own
+            # shutdown sequence via SIGKILL, which cannot be ignored.
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
 
             while True:
                 time.sleep(60)
