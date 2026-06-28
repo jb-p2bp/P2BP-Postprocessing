@@ -17,6 +17,18 @@ Optional:
     P2BP_TMP_DIR            Base directory for temporary downloads. Must be an
                             absolute path. Defaults to "<system temp>/p2bp-tmp"
                             (i.e. /tmp/p2bp-tmp on the EC2 Linux host).
+
+Exceptions raised:
+
+    ConfigError             Missing/invalid configuration: an unset required env
+                            var, a non-hex account id, or a relative/parentless
+                            P2BP_TMP_DIR.
+    InsecureTempDirError    A temp directory failed its safety checks (symlink,
+                            foreign owner, or not a directory) -- a possible
+                            hijack.
+    FileExistsError         The download target already exists and overwrite is
+                            False.
+    ValueError              A key/filename yields no safe local name.
 """
 
 import logging
