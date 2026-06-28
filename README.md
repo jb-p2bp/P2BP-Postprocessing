@@ -42,11 +42,12 @@ Responsibilities:
 
 ### r2.py
 
-Utilities for downloading objects from Cloudflare R2 (S3-compatible, via boto3).
+Utilities for uploading objects to and downloading objects from Cloudflare R2 (S3-compatible, via boto3).
 
 Responsibilities:
 
 * Build an R2 client from the environment
+* Upload local files to R2 (with overwrite protection via a HEAD check)
 * Download objects to a given path, directory, or a unique temp directory
 * Manage collision-free, private temp download directories
 
@@ -157,7 +158,7 @@ Required permissions:
 
 ### R2_ACCESS_KEY_ID
 
-Access key id of an R2 API token (used to download objects from R2).
+Access key id of an R2 API token (used to upload and download objects to/from R2).
 
 ### R2_SECRET_ACCESS_KEY
 
@@ -165,7 +166,7 @@ Secret for the R2 API token above.
 
 ### R2_BUCKET
 
-Optional. Default R2 bucket, so download calls can omit the bucket argument.
+Optional. Default R2 bucket, so upload and download calls can omit the bucket argument.
 
 ### P2BP_TMP_DIR
 
@@ -294,7 +295,6 @@ Planned additions include:
 * Continuous queue polling
 * Automatic EC2 shutdown after inactivity
 * Point cloud meshing
-* Cloudflare R2 uploads
 
 ```
 ```
