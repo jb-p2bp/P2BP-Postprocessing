@@ -12,12 +12,12 @@ posix_only = pytest.mark.skipif(
 )
 
 
-# --- r2_endpoint_url ---------------------------------------------------------
+# --- _r2_endpoint_url ---------------------------------------------------------
 
 
 def test_endpoint_url_valid():
     assert (
-        r2.r2_endpoint_url(VALID_ACCOUNT_ID)
+        r2._r2_endpoint_url(VALID_ACCOUNT_ID)
         == f"https://{VALID_ACCOUNT_ID}.r2.cloudflarestorage.com"
     )
 
@@ -35,7 +35,7 @@ def test_endpoint_url_valid():
 )
 def test_endpoint_url_rejects_malformed(bad):
     with pytest.raises(config.ConfigError):
-        r2.r2_endpoint_url(bad)
+        r2._r2_endpoint_url(bad)
 
 
 # --- _sanitize ---------------------------------------------------------------
@@ -78,23 +78,23 @@ def test_safe_join_rejects_degenerate(tmp_path, bad):
         r2._safe_join(tmp_path, bad)
 
 
-# --- tmp_base_dir ------------------------------------------------------------
+# --- _tmp_base_dir ------------------------------------------------------------
 
 
-def test_tmp_base_dir_rejects_relative(monkeypatch):
+def test__tmp_base_dir_rejects_relative(monkeypatch):
     monkeypatch.setenv("P2BP_TMP_DIR", "relative/dir")
     with pytest.raises(config.ConfigError):
-        r2.tmp_base_dir()
+        r2._tmp_base_dir()
 
 
-def test_tmp_base_dir_accepts_absolute(monkeypatch, tmp_path):
+def test__tmp_base_dir_accepts_absolute(monkeypatch, tmp_path):
     monkeypatch.setenv("P2BP_TMP_DIR", str(tmp_path))
-    assert r2.tmp_base_dir() == tmp_path
+    assert r2._tmp_base_dir() == tmp_path
 
 
-def test_tmp_base_dir_default(monkeypatch):
+def test__tmp_base_dir_default(monkeypatch):
     monkeypatch.delenv("P2BP_TMP_DIR", raising=False)
-    base = r2.tmp_base_dir()
+    base = r2._tmp_base_dir()
     assert base.is_absolute()
     assert base.name == "p2bp-tmp"
 
@@ -107,7 +107,7 @@ def test_new_download_dir_unique_and_nested():
     b = r2.new_download_dir()
     assert a != b
     assert a.exists() and b.exists()
-    assert a.parent == b.parent == r2.r2_downloads_dir()
+    assert a.parent == b.parent == r2._r2_downloads_dir()
 
 
 def test_new_download_dir_uses_label_prefix():

@@ -41,11 +41,11 @@ __all__ = [
     "InsecureTempDirError",
     "create_r2_client",
     "default_bucket",
-    "new_download_dir",
-    "temp_download_dir",
     "download_object",
     "download_to_dir",
     "download_to_temp",
+    "new_download_dir",
+    "temp_download_dir",
 ]
 
 
@@ -55,7 +55,7 @@ __all__ = [
 _ACCOUNT_ID_RE = re.compile(r"[0-9a-f]{32}")
 
 
-def r2_endpoint_url(account_id: str) -> str:
+def _r2_endpoint_url(account_id: str) -> str:
     """Return the R2 S3-compatible endpoint URL for `account_id`.
 
     Raises ConfigError if the id is not a 32-char lowercase hex string.
@@ -81,7 +81,7 @@ def create_r2_client() -> BaseClient:
 
     return boto3.client(
         "s3",
-        endpoint_url=r2_endpoint_url(account_id),
+        endpoint_url=_r2_endpoint_url(account_id),
         aws_access_key_id=access_key_id,
         aws_secret_access_key=secret_access_key,
         # R2 only supports the "auto" region and SigV4.
@@ -106,7 +106,7 @@ def default_bucket() -> str:
 # and easy to wipe wholesale if a worker dies mid-job.
 
 
-def tmp_base_dir() -> Path:
+def _tmp_base_dir() -> Path:
     override = os.getenv("P2BP_TMP_DIR")
     if override:
         # A relative override would be resolved against the process's cwd at
@@ -121,10 +121,10 @@ def tmp_base_dir() -> Path:
     return Path(tempfile.gettempdir()) / "p2bp-tmp"
 
 
-def r2_downloads_dir() -> Path:
+def _r2_downloads_dir() -> Path:
     # Build the tree one level at a time so each predictable component is
     # created/verified as a private directory we own (see _ensure_private_dir).
-    base = _ensure_private_dir(tmp_base_dir())
+    base = _ensure_private_dir(_tmp_base_dir())
     return _ensure_private_dir(base / "r2-downloads")
 
 
@@ -197,7 +197,7 @@ def new_download_dir(label: str | None = None) -> Path:
     """
 
     prefix = f"{_sanitize(label)}-" if label else ""
-    return Path(tempfile.mkdtemp(prefix=prefix, dir=r2_downloads_dir()))
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=_r2_downloads_dir()))
 
 
 @contextmanager
