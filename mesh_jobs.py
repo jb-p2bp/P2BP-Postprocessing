@@ -12,7 +12,11 @@ of messages produced by the worker.
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
+
+# Identifier that is stripped of surrounding whitespace and must be non-empty,
+# so values like " " are rejected rather than treated as valid ids.
+NonEmptyId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 MESH_GENERATE_TYPE = "mesh.generate"
 MESH_REFINE_TYPE = "mesh.refine"
@@ -26,8 +30,8 @@ class _MeshJobBase(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    organizationId: str = Field(min_length=1)
-    projectId: str = Field(min_length=1)
+    organizationId: NonEmptyId
+    projectId: NonEmptyId
 
 
 class MeshGenerateJob(_MeshJobBase):

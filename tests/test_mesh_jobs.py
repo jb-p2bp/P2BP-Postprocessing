@@ -87,6 +87,24 @@ class TestMeshGenerateJob:
                 zoneScanObjectKeys=["a/b.zip"],
             )
 
+    def test_whitespace_only_ids_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MeshGenerateJob(
+                organizationId="   ",
+                projectId="proj",
+                zoneScanObjectKeys=["a/b.zip"],
+            )
+
+    def test_ids_are_stripped(self) -> None:
+        message = MeshGenerateJob(
+            organizationId="  org  ",
+            projectId="  proj  ",
+            zoneScanObjectKeys=["a/b.zip"],
+        )
+
+        assert message.organizationId == "org"
+        assert message.projectId == "proj"
+
 
 class TestMeshRefineJob:
     def test_valid_refine_message(self) -> None:
