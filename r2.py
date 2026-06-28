@@ -115,26 +115,47 @@ def _ensure_private_dir(path: Path) -> Path:
     The download base lives at a predictable location (e.g. /tmp/p2bp-tmp)
     under world-writable /tmp. Plain mkdir(exist_ok=True) would silently adopt
     a pre-existing symlink or another user's directory, letting a local
-    attacker redirect every download. On POSIX we therefore reject a symlink
-    or foreign-owned directory and tighten loose permissions. On non-POSIX
-    platforms (local Windows dev) the ownership model differs, so we just
-    ensure the directory exists.
+    attacker redirect every download.
+
+    To avoid trusting directories we did not create and check, we do NOT create
+    intermediate parents: the parent must already exist (callers build the tree
+    one verified level at a time). On POSIX we then open the directory with
+    O_NOFOLLOW so a symlink swap fails outright, and verify ownership / tighten
+    permissions through the file descriptor so nothing is re-resolved between
+    check and use. On non-POSIX platforms (local Windows dev) the ownership
+    model differs, so we just ensure the directory exists.
     """
 
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        path.mkdir(mode=0o700, exist_ok=True)  # no parents=True: see docstring
+    except FileNotFoundError as error:
+        raise ConfigError(
+            f"parent directory of {path} does not exist; create it before use"
+        ) from error
 
     if not hasattr(os, "getuid"):  # non-POSIX (e.g. Windows dev machines)
         return path
 
-    info = path.lstat()
-    if stat.S_ISLNK(info.st_mode):
-        raise RuntimeError(f"refusing to use temp dir {path}: it is a symlink")
-    if info.st_uid != os.getuid():
+    # O_NOFOLLOW makes the open fail if the final component is a symlink, and
+    # operating on the fd (fstat/fchmod) closes the check-then-use race.
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+    except OSError as error:
         raise RuntimeError(
-            f"refusing to use temp dir {path}: owned by uid {info.st_uid}, not us"
-        )
-    if stat.S_IMODE(info.st_mode) != 0o700:
-        os.chmod(path, 0o700)
+            f"refusing to use temp dir {path}: not a regular directory ({error})"
+        ) from error
+
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != os.getuid():
+            raise RuntimeError(
+                f"refusing to use temp dir {path}: owned by uid {info.st_uid}, "
+                f"not us"
+            )
+        if stat.S_IMODE(info.st_mode) != 0o700:
+            os.fchmod(fd, 0o700)
+    finally:
+        os.close(fd)
 
     return path
 
