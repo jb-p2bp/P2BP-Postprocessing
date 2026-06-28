@@ -42,9 +42,9 @@ import re
 import shutil
 import stat
 import tempfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from collections.abc import Iterator
 
 import boto3
 from botocore.client import BaseClient
