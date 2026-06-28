@@ -17,27 +17,28 @@ MESH_GENERATE_VERSION = 1
 MESH_REFINE_VERSION = 1
 
 
-class MeshGenerateJob(BaseModel):
-    """Mesh generation job: build a mesh from uploaded zone scan archives."""
+class _MeshJobBase(BaseModel):
+    """Fields and config shared by every mesh job message."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    organizationId: str = Field(min_length=1)
+    projectId: str = Field(min_length=1)
+
+
+class MeshGenerateJob(_MeshJobBase):
+    """Mesh generation job: build a mesh from uploaded zone scan archives."""
 
     type: Literal[MESH_GENERATE_TYPE] = MESH_GENERATE_TYPE
     version: Literal[MESH_GENERATE_VERSION] = MESH_GENERATE_VERSION
-    organizationId: str = Field(min_length=1)
-    projectId: str = Field(min_length=1)
     zoneScanObjectKeys: list[str] = Field(default_factory=list)
 
 
-class MeshRefineJob(BaseModel):
+class MeshRefineJob(_MeshJobBase):
     """Mesh refinement job: refine an existing mesh for a project."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     type: Literal[MESH_REFINE_TYPE] = MESH_REFINE_TYPE
     version: Literal[MESH_REFINE_VERSION] = MESH_REFINE_VERSION
-    organizationId: str = Field(min_length=1)
-    projectId: str = Field(min_length=1)
 
 
 MeshJobMessage = Annotated[
