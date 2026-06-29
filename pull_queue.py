@@ -42,7 +42,7 @@ from dotenv import load_dotenv
 from config import ConfigError, require_env
 from mesh_jobs import MeshGenerateJob, MeshRefineJob, parse_mesh_job_message
 from r2 import create_r2_client, download_object, temp_download_dir, upload_object
-from scanproject_merger import export_merged_cloud, merge_scan_projects
+from scanproject_merger import export_merged_cloud_outputs, merge_scan_projects
 
 
 # =========================
@@ -408,7 +408,9 @@ def extract_scanproject_zip(archive: Path, destination: Path) -> Path:
 def process_generate_job(job: MeshGenerateJob) -> None:
     r2_client = create_r2_client()
     full_key = _project_output_key(job, "merged-point-cloud.laz")
+    full_bin_key = _project_output_key(job, "merged-point-cloud.bin")
     preview_key = _project_output_key(job, "merged-point-cloud.preview.laz")
+    preview_bin_key = _project_output_key(job, "merged-point-cloud.preview.bin")
 
     with temp_download_dir(f"{job.organizationId}-{job.projectId}") as workspace:
         archives_dir = workspace / "archives"
@@ -429,7 +431,9 @@ def process_generate_job(job: MeshGenerateJob) -> None:
             scanproject_paths.append(scanproject_dir)
 
         full_output = outputs_dir / "merged-point-cloud.laz"
+        full_bin_output = outputs_dir / "merged-point-cloud.bin"
         preview_output = outputs_dir / "merged-point-cloud.preview.laz"
+        preview_bin_output = outputs_dir / "merged-point-cloud.preview.bin"
 
         logger.info(
             "Merging %d scanproject archive(s) for organization=%s project=%s",
@@ -440,12 +444,14 @@ def process_generate_job(job: MeshGenerateJob) -> None:
         outputs = merge_scan_projects(
             scanproject_paths,
             full_output,
+            bin_output=full_bin_output,
             deduplicate_voxel=MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL,
             export_minimum_confidence=0,
         )
-        preview_points = export_merged_cloud(
+        preview_points = export_merged_cloud_outputs(
             outputs.result,
-            preview_output,
+            laz_output=preview_output,
+            bin_output=preview_bin_output,
             minimum_confidence=0,
             deduplicate_voxel=PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL,
         )
@@ -456,7 +462,9 @@ def process_generate_job(job: MeshGenerateJob) -> None:
             preview_points,
         )
         upload_object(r2_client, full_output, full_key, overwrite=True)
+        upload_object(r2_client, full_bin_output, full_bin_key, overwrite=True)
         upload_object(r2_client, preview_output, preview_key, overwrite=True)
+        upload_object(r2_client, preview_bin_output, preview_bin_key, overwrite=True)
 
 
 def process_message(body: Any) -> None:
