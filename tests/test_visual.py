@@ -1,10 +1,51 @@
+import types
 from pathlib import Path
 
 import numpy as np
 
 from scanproject_merger.format import transform_points
 from scanproject_merger.registration import register_pair, rigid_transform
-from scanproject_merger.visual import _fit_yaw, _keyframe_file, _matrix
+from scanproject_merger.visual import _Features, _fit_yaw, _keyframe_file, _matrix, _world_point
+
+
+def _depth_frame(filename: str, width: int, height: int) -> dict:
+    return {
+        "sceneDepthPayload": {"width": width, "height": height, "depthMapFilename": filename},
+        "imageWidth": width,
+        "imageHeight": height,
+        "cameraIntrinsics": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "cameraTransform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    }
+
+
+def _single_feature(frame: dict) -> _Features:
+    return _Features(
+        frames=[frame],
+        descriptors=np.zeros((1, 128), dtype=np.float32),
+        frame_indices=np.array([0], dtype=np.int32),
+        image_points=np.array([[0.0, 0.0]], dtype=np.float32),
+    )
+
+
+def test_world_point_reads_a_valid_depth_sample(tmp_path: Path):
+    (tmp_path / "keyframes").mkdir()
+    np.full(4, 2.0, dtype="<f4").tofile(tmp_path / "keyframes" / "d.bin")  # 2x2 grid, all 2.0 m
+    project = types.SimpleNamespace(path=tmp_path)
+    result = _world_point(project, _single_feature(_depth_frame("d.bin", 2, 2)), 0)
+    assert result is not None
+    np.testing.assert_allclose(result, [0.0, 0.0, -2.0])
+
+
+def test_world_point_rejects_truncated_depth_map(tmp_path: Path):
+    (tmp_path / "keyframes").mkdir()
+    np.full(1, 2.0, dtype="<f4").tofile(tmp_path / "keyframes" / "d.bin")  # only 1 of the declared 4 samples
+    project = types.SimpleNamespace(path=tmp_path)
+    assert _world_point(project, _single_feature(_depth_frame("d.bin", 2, 2)), 0) is None
+
+
+def test_world_point_rejects_nonpositive_dimensions(tmp_path: Path):
+    project = types.SimpleNamespace(path=tmp_path)
+    assert _world_point(project, _single_feature(_depth_frame("d.bin", 0, 2)), 0) is None
 
 
 def test_keyframe_file_allows_names_inside_the_keyframes_directory(tmp_path: Path):

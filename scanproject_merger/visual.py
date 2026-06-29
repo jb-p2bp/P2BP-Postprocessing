@@ -111,12 +111,18 @@ def _world_point(project: ScanProject, features: _Features, feature_index: int) 
     frame = features.frames[int(features.frame_indices[feature_index])]
     payload = frame["sceneDepthPayload"]
     width, height = int(payload["width"]), int(payload["height"])
+    image_width, image_height = int(frame["imageWidth"]), int(frame["imageHeight"])
+    # Reject nonsensical dimensions before they drive memmap shapes or divide.
+    if width <= 0 or height <= 0 or image_width <= 0 or image_height <= 0:
+        return None
     point = features.image_points[feature_index]
-    depth_x = int(np.clip(round(point[0] * width / frame["imageWidth"]), 0, width - 1))
-    depth_y = int(np.clip(round(point[1] * height / frame["imageHeight"]), 0, height - 1))
+    depth_x = int(np.clip(round(point[0] * width / image_width), 0, width - 1))
+    depth_y = int(np.clip(round(point[1] * height / image_height), 0, height - 1))
     offset = depth_y * width + depth_x
     depth_path = _keyframe_file(project.path, payload["depthMapFilename"])
-    if depth_path is None:
+    # A depth map shorter than width*height float32 samples would map past EOF
+    # or read out of bounds, so require the file to hold the declared grid.
+    if depth_path is None or depth_path.stat().st_size < width * height * 4:
         return None
     depth = np.memmap(depth_path, dtype="<f4", mode="r", shape=(height * width,))
     value = float(depth[offset])
@@ -125,7 +131,7 @@ def _world_point(project: ScanProject, features: _Features, feature_index: int) 
     confidence_name = payload.get("confidenceMapFilename")
     if confidence_name:
         confidence_path = _keyframe_file(project.path, confidence_name)
-        if confidence_path is None:
+        if confidence_path is None or confidence_path.stat().st_size < width * height:
             return None
         confidence = np.memmap(confidence_path, dtype="u1", mode="r", shape=(height * width,))
         if confidence[offset] < 1:
