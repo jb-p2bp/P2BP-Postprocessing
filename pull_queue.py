@@ -297,6 +297,31 @@ def compute_backoff(consecutive_failures: int) -> float:
     )
 
 
+class FailureTracker:
+    """Counts consecutive failures per stage (e.g. "poll", "processing").
+
+    Stages are counted independently: a success in one stage resets only that
+    stage's counter. This keeps the "reset on success, increment on failure,
+    give up at the limit" invariant in one place instead of spread across the
+    main loop as separate counters.
+    """
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._counts: dict[str, int] = {}
+
+    def reset(self, stage: str) -> None:
+        self._counts[stage] = 0
+
+    def record(self, stage: str) -> int:
+        """Increment the stage's counter and return the new count."""
+        self._counts[stage] = self._counts.get(stage, 0) + 1
+        return self._counts[stage]
+
+    def limit_reached(self, stage: str) -> bool:
+        return self._counts.get(stage, 0) >= self._limit
+
+
 def process_message(body: Any) -> None:
     """
     MUST raise Exception on failure.
@@ -437,8 +462,7 @@ def main() -> None:
 
     client = Cloudflare(api_token=api_token)
 
-    consecutive_poll_failures = 0
-    consecutive_processing_failures = 0
+    failures = FailureTracker(MAX_CONSECUTIVE_FAILURES)
     start_time = time.monotonic()
 
     last_completed_work_time = time.monotonic()
@@ -462,7 +486,7 @@ def main() -> None:
             logger.debug("Polling queue...")
 
             messages = pull_one(client, queue_id, account_id)
-            consecutive_poll_failures = 0
+            failures.reset("poll")
 
             if not messages:
                 idle_for = time.monotonic() - last_completed_work_time
@@ -477,16 +501,10 @@ def main() -> None:
             handle_message(client, queue_id, account_id, messages[0])
 
             last_completed_work_time = time.monotonic()
-            consecutive_processing_failures = 0
+            failures.reset("processing")
 
         except Exception as e:
-            if failure_stage == "poll":
-                consecutive_poll_failures += 1
-                active_failures = consecutive_poll_failures
-            else:
-                consecutive_processing_failures += 1
-                active_failures = consecutive_processing_failures
-
+            active_failures = failures.record(failure_stage)
             backoff = compute_backoff(active_failures)
 
             logger.exception(
@@ -494,7 +512,7 @@ def main() -> None:
                 f"({active_failures}/{MAX_CONSECUTIVE_FAILURES}): {e}"
             )
 
-            if active_failures >= MAX_CONSECUTIVE_FAILURES:
+            if failures.limit_reached(failure_stage):
                 logger.error(f"Too many consecutive {failure_stage} failures.")
                 ensure_shutdown(
                     f"too many consecutive {failure_stage} failures",
