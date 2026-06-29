@@ -372,8 +372,8 @@ def main() -> None:
         logger.info(f"Cached EC2 instance ID: {instance_id}")
     else:
         logger.warning(
-            "Could not cache the EC2 instance ID during startup. "
-            "Shutdown mode will retry metadata lookup."
+            "Could not determine the EC2 instance ID during startup. "
+            "Shutdown-behavior verification will refuse to run without it."
         )
 
     verify_shutdown_behavior(instance_id, region)
