@@ -33,6 +33,15 @@ MAX_BACKOFF_SECONDS = int(os.getenv("MAX_BACKOFF_SECONDS", "300"))
 MAX_RUNTIME_SECONDS = int(os.getenv("MAX_RUNTIME_SECONDS", "43200"))  # 12h default
 SHUTDOWN_RETRY_SECONDS = int(os.getenv("SHUTDOWN_RETRY_SECONDS", "30"))
 
+# How long a pulled message stays invisible to other pulls before redelivery.
+VISIBILITY_TIMEOUT_MS = int(os.getenv("VISIBILITY_TIMEOUT_MS", "30000"))
+
+# EC2 Instance Metadata Service (IMDSv2). These are fixed infrastructure facts,
+# not per-deploy tunables.
+IMDS_BASE_URL = "http://169.254.169.254"
+IMDS_TOKEN_TTL_SECONDS = "21600"  # 6h; only bounds a single metadata fetch
+IMDS_REQUEST_TIMEOUT_SECONDS = 2
+
 running = True
 
 
@@ -92,9 +101,9 @@ def get_instance_id(max_attempts: int = 3) -> Optional[str]:
     for attempt in range(1, max_attempts + 1):
         try:
             token_response = requests.put(
-                "http://169.254.169.254/latest/api/token",
-                headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
-                timeout=2,
+                f"{IMDS_BASE_URL}/latest/api/token",
+                headers={"X-aws-ec2-metadata-token-ttl-seconds": IMDS_TOKEN_TTL_SECONDS},
+                timeout=IMDS_REQUEST_TIMEOUT_SECONDS,
             )
             token_response.raise_for_status()
             token = token_response.text.strip()
@@ -103,9 +112,9 @@ def get_instance_id(max_attempts: int = 3) -> Optional[str]:
                 raise requests.RequestException("IMDS returned an empty token")
 
             response = requests.get(
-                "http://169.254.169.254/latest/meta-data/instance-id",
+                f"{IMDS_BASE_URL}/latest/meta-data/instance-id",
                 headers={"X-aws-ec2-metadata-token": token},
-                timeout=2,
+                timeout=IMDS_REQUEST_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
 
@@ -289,7 +298,7 @@ def pull_one(client, queue_id: str, account_id: str) -> list:
         queue_id,
         account_id=account_id,
         batch_size=1,
-        visibility_timeout_ms=30_000,
+        visibility_timeout_ms=VISIBILITY_TIMEOUT_MS,
     )
     return getattr(pull_response, "messages", [])
 
