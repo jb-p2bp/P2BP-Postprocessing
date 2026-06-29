@@ -31,10 +31,26 @@ def test_exports_each_transformed_source_without_deduplication(tmp_path: Path):
     prepared = prepare_scans([scan], voxel_size=0.01, minimum_confidence=0)
     result = RegistrationResult(prepared, [np.eye(4)], [])
     outputs = export_transformed_scans(result, tmp_path / "aligned", minimum_confidence=0)
-    assert outputs == [tmp_path / "aligned" / "B1-one.laz"]
+    assert outputs == [tmp_path / "aligned" / "000-B1-one.laz"]
     cloud = laspy.read(outputs[0])
     assert len(cloud.points) == 4
     np.testing.assert_allclose(cloud.x, [500_000, 500_001, 500_001, 500_002])
+
+
+def test_transformed_filenames_disambiguate_shared_stems(tmp_path: Path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    points = np.array([[0, 0, 0], [1, 2, 3], [2, 4, 6]])
+    first = ScanProject.open(make_project(tmp_path / "a" / "dup.scanproject", points))
+    second = ScanProject.open(make_project(tmp_path / "b" / "dup.scanproject", points))
+    prepared = prepare_scans([first, second], voxel_size=0.01, minimum_confidence=0)
+    result = RegistrationResult(prepared, [np.eye(4), np.eye(4)], [])
+
+    outputs = export_transformed_scans(result, tmp_path / "aligned", minimum_confidence=0)
+
+    # Both packages share the stem "dup"; the source index keeps them distinct.
+    assert outputs == [tmp_path / "aligned" / "000-dup.laz", tmp_path / "aligned" / "001-dup.laz"]
+    assert all(path.is_file() for path in outputs)
 
 
 def test_exports_empty_cloud_when_confidence_filter_removes_all_points(tmp_path: Path):
@@ -62,7 +78,7 @@ def test_exports_each_original_source_as_laz(tmp_path: Path):
 
     outputs = export_original_scans(result, tmp_path / "original", minimum_confidence=0)
 
-    assert outputs == [tmp_path / "original" / "B1-one.laz"]
+    assert outputs == [tmp_path / "original" / "000-B1-one.laz"]
     cloud = laspy.read(outputs[0])
     assert len(cloud.points) == 3
     assert cloud.header.parse_crs().to_epsg() == 32618

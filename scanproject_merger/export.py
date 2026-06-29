@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import laspy
@@ -11,6 +12,15 @@ from pyproj import CRS
 
 from .format import transform_points
 from .registration import RegistrationResult
+
+
+def _temp_sibling(output: Path) -> Path:
+    """A unique temp path beside ``output`` that preserves its suffix.
+
+    laspy detects LAS vs LAZ from the file extension, so the temp file must end
+    in the same suffix as the final output.
+    """
+    return output.with_suffix(f".{os.getpid()}.tmp{output.suffix}")
 
 
 def _write_cloud(
@@ -40,7 +50,15 @@ def _write_cloud(
     cloud.confidence = confidence
     cloud.source_id = source_ids
     cloud.scan_time = timestamps
-    cloud.write(output)
+    # Write to a sibling temp file then atomically replace, so a crash or a
+    # concurrent reader never observes a half-written cloud.
+    temp = _temp_sibling(output)
+    try:
+        cloud.write(str(temp))
+        os.replace(temp, output)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
 
 
 def export_merged_cloud(
@@ -92,7 +110,8 @@ def export_transformed_scans(
     for source_id, (scan, transform) in enumerate(zip(result.scans, result.final_transforms)):
         batch = scan.project.points(minimum_confidence)
         xyz = transform_points(batch.positions, transform)
-        output = directory / f"{scan.project.path.stem}.laz"
+        # Prefix with the source index so scans that share a stem cannot collide.
+        output = directory / f"{source_id:03d}-{scan.project.path.stem}.laz"
         _write_cloud(
             output,
             xyz,
@@ -119,7 +138,8 @@ def export_original_scans(
     for source_id, scan in enumerate(result.scans):
         batch = scan.project.points(minimum_confidence)
         xyz = transform_points(batch.positions, scan.initial_transform)
-        output = directory / f"{scan.project.path.stem}.laz"
+        # Prefix with the source index so scans that share a stem cannot collide.
+        output = directory / f"{source_id:03d}-{scan.project.path.stem}.laz"
         _write_cloud(
             output,
             xyz,
@@ -184,4 +204,11 @@ def write_registration_report(result: RegistrationResult, output: str | Path, ex
             for rejection in result.rejected_edges
         ],
     }
-    Path(output).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")  # Two-space JSON indent.
+    destination = Path(output)
+    temp = _temp_sibling(destination)
+    try:
+        temp.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")  # Two-space JSON indent.
+        os.replace(temp, destination)  # Atomic so a reader never sees a partial report.
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise

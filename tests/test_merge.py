@@ -61,6 +61,6 @@ def test_merge_emits_transformed_and_original_sources(tmp_path: Path):
         original_scans_dir=tmp_path / "original",
     )
 
-    assert outputs.transformed_scans == [tmp_path / "aligned" / "one.laz"]
-    assert outputs.original_scans == [tmp_path / "original" / "one.laz"]
+    assert outputs.transformed_scans == [tmp_path / "aligned" / "000-one.laz"]
+    assert outputs.original_scans == [tmp_path / "original" / "000-one.laz"]
     assert all(path.is_file() for path in outputs.transformed_scans + outputs.original_scans)
