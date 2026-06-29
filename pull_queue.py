@@ -283,6 +283,20 @@ def ensure_shutdown(
 # CORE LOGIC
 # =========================
 
+def compute_backoff(consecutive_failures: int) -> float:
+    """Exponential backoff (base POLL_INTERVAL_SECONDS) with +/-20% jitter, capped.
+
+    Jitter spreads retries so repeated failures don't align into a thundering
+    herd. The result is capped at MAX_BACKOFF_SECONDS.
+    """
+    return min(
+        POLL_INTERVAL_SECONDS
+        * (2 ** (consecutive_failures - 1))
+        * random.uniform(0.8, 1.2),
+        MAX_BACKOFF_SECONDS,
+    )
+
+
 def process_message(body: Any) -> None:
     """
     MUST raise Exception on failure.
@@ -453,12 +467,7 @@ def main() -> None:
                 consecutive_processing_failures += 1
                 active_failures = consecutive_processing_failures
 
-            backoff = min(
-                POLL_INTERVAL_SECONDS
-                * (2 ** (active_failures - 1))
-                * random.uniform(0.8, 1.2),
-                MAX_BACKOFF_SECONDS,
-            )
+            backoff = compute_backoff(active_failures)
 
             logger.exception(
                 f"{failure_stage.capitalize()} error "
