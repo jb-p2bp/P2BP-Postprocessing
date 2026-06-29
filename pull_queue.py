@@ -129,6 +129,28 @@ def parse_body(body: Any) -> Any:
     return body
 
 
+def _message_body_for_log(message: Any) -> str:
+    body = parse_body(getattr(message, "body", None))
+    if isinstance(body, (dict, list)):
+        return json.dumps(body, sort_keys=True)
+    return repr(body)
+
+
+def log_pulled_messages(messages: list[Any]) -> None:
+    if not messages:
+        return
+
+    logger.info("Pulled %d message(s) from queue.", len(messages))
+    for index, message in enumerate(messages, start=1):
+        logger.info(
+            "Pulled message %d/%d lease_id=%s body=%s",
+            index,
+            len(messages),
+            getattr(message, "lease_id", None),
+            _message_body_for_log(message),
+        )
+
+
 def get_instance_id(max_attempts: int = 3) -> Optional[str]:
     for attempt in range(1, max_attempts + 1):
         try:
@@ -511,7 +533,9 @@ def pull_one(client: Cloudflare, queue_id: str, account_id: str) -> list[Any]:
     # `or []` guards against the attribute being present but None, which the
     # SDK may return for an empty pull; a bare getattr default only covers a
     # missing attribute.
-    return getattr(pull_response, "messages", None) or []
+    messages = getattr(pull_response, "messages", None) or []
+    log_pulled_messages(messages)
+    return messages
 
 
 def handle_message(

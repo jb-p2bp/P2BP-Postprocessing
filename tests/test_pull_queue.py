@@ -5,6 +5,7 @@ The worker is an EC2-hosted long-runner with many external dependencies
 is practical to exercise without standing up the surrounding infrastructure.
 """
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 import zipfile
@@ -55,6 +56,26 @@ def make_zip(path: Path, files: dict[str, bytes]) -> Path:
 def zip_bytes(tmp_path: Path, files: dict[str, bytes]) -> bytes:
     path = make_zip(tmp_path / "scan.zip", files)
     return path.read_bytes()
+
+
+def test_pull_one_logs_pulled_messages(caplog):
+    message = SimpleNamespace(
+        lease_id="lease_123",
+        body='{"type":"mesh.generate","projectId":"proj_456"}',
+    )
+    response = SimpleNamespace(messages=[message])
+    client = SimpleNamespace(
+        queues=SimpleNamespace(
+            messages=SimpleNamespace(pull=lambda *args, **kwargs: response)
+        )
+    )
+
+    with caplog.at_level(logging.INFO, logger="queue-worker"):
+        assert pull_queue.pull_one(client, "queue_123", "account_123") == [message]
+
+    assert "Pulled 1 message(s) from queue." in caplog.text
+    assert "lease_id=lease_123" in caplog.text
+    assert '"projectId": "proj_456"' in caplog.text
 
 
 def test_process_generate_job_downloads_merges_and_uploads_outputs(
