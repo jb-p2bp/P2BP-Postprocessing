@@ -35,6 +35,8 @@ import requests
 from cloudflare import Cloudflare
 from dotenv import load_dotenv
 
+from config import ConfigError, require_env
+
 
 # =========================
 # CONFIG
@@ -101,14 +103,6 @@ def configure_runtime() -> None:
 # =========================
 # HELPERS
 # =========================
-
-def require_env(name: str) -> str:
-    value = os.getenv(name)
-    if not value:
-        logger.error(f"Missing required environment variable: {name}")
-        sys.exit(1)
-    return value
-
 
 def parse_body(body: Any) -> Any:
     if isinstance(body, str):
@@ -444,10 +438,14 @@ def handle_empty_poll(
 def main() -> None:
     configure_runtime()
 
-    account_id = require_env("CLOUDFLARE_ACCOUNT_ID")
-    queue_id = require_env("CLOUDFLARE_QUEUE_ID")
-    api_token = require_env("CLOUDFLARE_API_TOKEN")
-    region = require_env("AWS_REGION")
+    try:
+        account_id = require_env("CLOUDFLARE_ACCOUNT_ID")
+        queue_id = require_env("CLOUDFLARE_QUEUE_ID")
+        api_token = require_env("CLOUDFLARE_API_TOKEN")
+        region = require_env("AWS_REGION")
+    except ConfigError as e:
+        logger.error(e)
+        sys.exit(1)
 
     instance_id = get_instance_id()
     if instance_id:
