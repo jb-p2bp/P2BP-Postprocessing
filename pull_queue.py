@@ -226,6 +226,15 @@ def ensure_shutdown(
 ) -> NoReturn:
     logger.critical(f"Entering shutdown mode: {reason}")
 
+    # Once we have committed to shutting down, ignore SIGTERM/SIGINT for the
+    # entire shutdown window -- the EC2 API attempt(s), the OS-poweroff
+    # fallback, and the retry sleeps. Absorbing a supervisor's stop signal
+    # prevents it from observing an exit and launching a replacement worker on
+    # an instance that is already going down. The OS still terminates us at the
+    # end of its own shutdown sequence via SIGKILL, which cannot be ignored.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     shutdown_instance_id = instance_id
 
     while True:
@@ -247,15 +256,8 @@ def ensure_shutdown(
                 "EC2 stop request accepted. Waiting for the instance to stop."
             )
 
-            # Keep the process alive so a supervisor cannot restart it during
-            # the asynchronous EC2 stop window. Ignore SIGTERM/SIGINT here:
-            # absorbing a supervisor's stop signal prevents it from observing
-            # an exit and launching a replacement worker on an instance that is
-            # already stopping. The OS still terminates us at the end of its own
-            # shutdown sequence via SIGKILL, which cannot be ignored.
-            signal.signal(signal.SIGTERM, signal.SIG_IGN)
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-
+            # Stay alive (signals already ignored above) until the OS shutdown
+            # sequence terminates us.
             while True:
                 time.sleep(60)
 
