@@ -20,6 +20,7 @@ This repository serves as the foundation for future point cloud processing and m
 ```text
 .
 ├── config.py
+├── mesh_jobs.py               # pydantic models for MESH_JOBS queue messages
 ├── pull_queue.py
 ├── r2.py
 ├── scanproject_merger/        # point cloud registration & merging library
@@ -63,6 +64,21 @@ Responsibilities:
 
 Shared configuration helpers (`require_env`, `ConfigError`) used by the other
 modules to read required environment variables.
+
+### mesh_jobs.py
+
+Pydantic models for the messages the worker consumes from the `MESH_JOBS`
+queue. Each message carries a `type` for dispatch and a `version` pinned per
+variant, so a consumer validates only the exact schema it was built for and
+rejects any other version. The discriminated union (`MeshGenerateJob`,
+`MeshRefineJob`) mirrors the `MeshJobQueueMessage` type defined in
+`p2bp-cf-worker`; field names are camelCase to match that JSON wire contract
+exactly (do not rename them to snake_case). Use `parse_mesh_job_message()` to
+validate an arbitrary payload into a typed variant.
+
+> **Note:** the worker does not yet dispatch on these models — it currently
+> displays and acknowledges raw messages. They are the contract for the
+> planned meshing pipeline and are currently exercised only by their tests.
 
 ### scanproject_merger/
 
