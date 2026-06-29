@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .export import (
-    export_merged_cloud,
+    export_merged_cloud_outputs,
     export_original_scans,
     export_transformed_scans,
     write_registration_report,
@@ -52,6 +52,7 @@ class MergeOutputs:
     report: Path
     point_count: int
     result: RegistrationResult
+    bin_output: Path | None = None
     transformed_scans: list[Path] = field(default_factory=list)
     original_scans: list[Path] = field(default_factory=list)
 
@@ -60,6 +61,7 @@ def merge_scan_projects(
     inputs: Iterable[str | Path],
     output: str | Path,
     *,
+    bin_output: str | Path | None = None,
     report: str | Path | None = None,
     transformed_scans_dir: str | Path | None = None,
     original_scans_dir: str | Path | None = None,
@@ -72,9 +74,11 @@ def merge_scan_projects(
     ``inputs`` may mix individual ``.scanproject`` directories and parent directories
     containing them; they are resolved with :func:`discover`. The merged cloud is
     written to ``output`` and an audit report to ``report`` (defaulting to
-    ``output`` with a ``.registration.json`` suffix). When ``transformed_scans_dir``
-    or ``original_scans_dir`` is given, one LAZ file per source scan is also written
-    there. Source packages are never modified.
+    ``output`` with a ``.registration.json`` suffix). When ``bin_output`` is given,
+    the same points are also written using ScannerConsolidator's packed ``.bin``
+    point format. When ``transformed_scans_dir`` or ``original_scans_dir`` is
+    given, one LAZ file per source scan is also written there. Source packages
+    are never modified.
 
     ``registration`` carries the alignment tuning (see :class:`RegistrationParams`);
     ``deduplicate_voxel`` and ``export_minimum_confidence`` control output only.
@@ -88,8 +92,15 @@ def merge_scan_projects(
     result = register_scans(projects, registration)
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    point_count = export_merged_cloud(
-        result, output_path, export_minimum_confidence, deduplicate_voxel
+    bin_output_path = Path(bin_output) if bin_output else None
+    if bin_output_path:
+        bin_output_path.parent.mkdir(parents=True, exist_ok=True)
+    point_count = export_merged_cloud_outputs(
+        result,
+        laz_output=output_path,
+        bin_output=bin_output_path,
+        minimum_confidence=export_minimum_confidence,
+        deduplicate_voxel=deduplicate_voxel,
     )
     report_path = Path(report) if report else output_path.with_suffix(".registration.json")
     write_registration_report(result, report_path, point_count)
@@ -108,6 +119,7 @@ def merge_scan_projects(
         report=report_path,
         point_count=point_count,
         result=result,
+        bin_output=bin_output_path,
         transformed_scans=transformed_scans,
         original_scans=original_scans,
     )
