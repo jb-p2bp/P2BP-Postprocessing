@@ -21,6 +21,12 @@ POINT_DTYPE = np.dtype(
     align=False,
 )
 
+# Upper bound on a single package's point count. Scans are user-uploaded, and
+# points() loads every chunk into memory, so an absurd manifest could exhaust
+# the worker. 100M points is ~2.4 GB packed on disk -- generous for a phone
+# scan while still rejecting nonsense. Callers may override per ScanProject.open.
+MAXIMUM_POINTS = 100_000_000
+
 
 class ScanProjectError(ValueError):
     """Raised when a scan package is missing or malformed."""
@@ -96,7 +102,7 @@ class ScanProject:
     manifest: dict[str, Any]
 
     @classmethod
-    def open(cls, path: str | Path) -> ScanProject:
+    def open(cls, path: str | Path, *, maximum_points: int = MAXIMUM_POINTS) -> ScanProject:
         package = Path(path)
         manifest_path = package / "manifest.json"
         if not package.is_dir() or not manifest_path.is_file():
@@ -107,6 +113,12 @@ class ScanProject:
             point_count = int(manifest["pointCount"])
         except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
             raise ScanProjectError(f"invalid manifest in {package}: {error}") from error
+        if point_count < 0 or chunk_count < 0:
+            raise ScanProjectError(f"manifest has negative counts: {package}")
+        if point_count > maximum_points:
+            raise ScanProjectError(
+                f"scan declares {point_count} points, exceeding the {maximum_points} limit: {package}"
+            )
         geo_value = manifest.get("geoReference")
         try:
             georeference = GeoReference.from_json(geo_value) if geo_value else None

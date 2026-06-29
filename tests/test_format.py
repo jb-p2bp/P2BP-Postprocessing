@@ -57,3 +57,21 @@ def test_rejects_inconsistent_point_count(tmp_path: Path):
     (path / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(ScanProjectError, match="chunks contain 3"):
         ScanProject.open(path)
+
+
+def test_rejects_point_count_above_the_limit(tmp_path: Path):
+    path = make_project(tmp_path / "huge.scanproject", np.zeros((3, 3)))
+    manifest = json.loads((path / "manifest.json").read_text())
+    manifest["pointCount"] = 10_000_000_000  # Absurd count that should be refused before reading chunks.
+    (path / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ScanProjectError, match="exceeding the"):
+        ScanProject.open(path, maximum_points=1_000_000)
+
+
+def test_rejects_negative_counts(tmp_path: Path):
+    path = make_project(tmp_path / "neg.scanproject", np.zeros((3, 3)))
+    manifest = json.loads((path / "manifest.json").read_text())
+    manifest["pointCount"] = -1
+    (path / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ScanProjectError, match="negative counts"):
+        ScanProject.open(path)
