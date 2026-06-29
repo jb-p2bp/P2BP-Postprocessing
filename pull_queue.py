@@ -1,3 +1,25 @@
+"""EC2-hosted worker that drains a Cloudflare queue and self-stops when idle.
+
+The instance is powered on by a Cloudflare worker that first enqueues a message,
+so the worker assumes that being up means there should be work. It polls the
+queue, processes one message at a time, and stops the EC2 instance when the
+queue stays empty past the idle limit, the max runtime is hit, or failures pile
+up. See ensure_shutdown for the EC2-API-then-OS-poweroff shutdown strategy.
+
+Runtime prerequisites:
+  * Environment variables: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_QUEUE_ID,
+    CLOUDFLARE_API_TOKEN, AWS_REGION (loaded from the environment / a .env file).
+  * Process supervisor: run under a supervisor (e.g. systemd). The worker exits
+    on graceful signals and expects the supervisor NOT to relaunch it once the
+    instance is stopping (it absorbs stop signals during the EC2 stop window).
+  * IAM role permissions: ec2:StopInstances and ec2:DescribeInstanceAttribute.
+  * Instance metadata: IMDSv2 must be reachable at IMDS_BASE_URL.
+  * Shutdown behavior: the instance's InstanceInitiatedShutdownBehavior must be
+    "stop" (verified at startup) so the OS-poweroff fallback cannot terminate it.
+  * sudo: a passwordless rule allowing `sudo -n systemctl poweroff`, scoped to
+    exactly that command.
+"""
+
 import json
 import os
 import sys
