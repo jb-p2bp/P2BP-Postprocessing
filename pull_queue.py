@@ -78,7 +78,7 @@ logger = logging.getLogger("queue-worker")
 # SIGNAL HANDLING
 # =========================
 
-def handle_signal(signum, frame):
+def handle_signal(signum: int, frame: Any) -> None:
     global running
     logger.warning(f"Received signal {signum}. Shutting down gracefully...")
     running = False
@@ -305,7 +305,9 @@ def process_message(body: Any) -> None:
     # ----------------------------------------------------------------------
 
 
-def ack_message(client, queue_id, account_id, lease_id: str) -> None:
+def ack_message(
+    client: Cloudflare, queue_id: str, account_id: str, lease_id: str
+) -> None:
     client.queues.messages.ack(
         queue_id,
         account_id=account_id,
@@ -314,7 +316,7 @@ def ack_message(client, queue_id, account_id, lease_id: str) -> None:
     )
 
 
-def pull_one(client, queue_id: str, account_id: str) -> list:
+def pull_one(client: Cloudflare, queue_id: str, account_id: str) -> list:
     """Pull a single message from the queue, returning a (possibly empty) list."""
     pull_response = client.queues.messages.pull(
         queue_id,
@@ -325,7 +327,9 @@ def pull_one(client, queue_id: str, account_id: str) -> list:
     return getattr(pull_response, "messages", [])
 
 
-def handle_message(client, queue_id: str, account_id: str, message: Any) -> None:
+def handle_message(
+    client: Cloudflare, queue_id: str, account_id: str, message: Any
+) -> None:
     """Process a single message and ack it only on success.
 
     Raises on any failure so the caller can record a processing failure and
