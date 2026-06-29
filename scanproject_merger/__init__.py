@@ -29,6 +29,7 @@ from .format import (
 from .merge import MergeOutputs, discover, merge_scan_projects
 from .registration import (
     RegistrationEdge,
+    RegistrationParams,
     RegistrationResult,
     RejectedRegistrationEdge,
     register_scans,
@@ -39,6 +40,7 @@ __all__ = [
     "MergeOutputs",
     "PointBatch",
     "RegistrationEdge",
+    "RegistrationParams",
     "RegistrationResult",
     "RejectedRegistrationEdge",
     "ScanProject",
@@ -49,6 +51,5 @@ __all__ = [
     "export_transformed_scans",
     "merge_scan_projects",
     "register_scans",
-    "transform_points",
     "write_registration_report",
 ]

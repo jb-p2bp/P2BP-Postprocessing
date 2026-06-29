@@ -4,7 +4,7 @@ import laspy
 import numpy as np
 import pytest
 
-from scanproject_merger import ScanProjectError, merge_scan_projects
+from scanproject_merger import RegistrationParams, ScanProjectError, merge_scan_projects
 from scanproject_merger.merge import discover
 from test_format import make_project
 
@@ -34,7 +34,7 @@ def test_merge_single_scan_writes_cloud_and_report(tmp_path: Path):
         [tmp_path],
         output,
         deduplicate_voxel=0,
-        registration_minimum_confidence=0,
+        registration=RegistrationParams(minimum_confidence=0),
         export_minimum_confidence=0,
     )
 
@@ -55,7 +55,7 @@ def test_merge_emits_transformed_and_original_sources(tmp_path: Path):
         [tmp_path],
         output,
         deduplicate_voxel=0,
-        registration_minimum_confidence=0,
+        registration=RegistrationParams(minimum_confidence=0),
         export_minimum_confidence=0,
         transformed_scans_dir=tmp_path / "aligned",
         original_scans_dir=tmp_path / "original",

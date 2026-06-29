@@ -19,7 +19,7 @@ from .export import (
     write_registration_report,
 )
 from .format import ScanProject, ScanProjectError
-from .registration import RegistrationResult, register_scans
+from .registration import RegistrationParams, RegistrationResult, register_scans
 
 
 def discover(inputs: Iterable[str | Path]) -> list[Path]:
@@ -63,18 +63,9 @@ def merge_scan_projects(
     report: str | Path | None = None,
     transformed_scans_dir: str | Path | None = None,
     original_scans_dir: str | Path | None = None,
-    registration_voxel: float = 0.10,  # 10 cm ICP sampling.
+    registration: RegistrationParams = RegistrationParams(),  # Frozen, so a shared default is safe.
     deduplicate_voxel: float = 0.02,  # 2 cm output grid.
-    registration_minimum_confidence: int = 1,  # Align on medium+ confidence.
     export_minimum_confidence: int = 0,  # Preserve all output points.
-    candidate_padding: float = 10.0,  # Metres around scan bounds.
-    maximum_distance: float = 5.0,  # Initial ICP gate in metres.
-    minimum_overlap: float = 0.03,  # Require 3% sampled overlap.
-    maximum_rmse: float = 0.40,  # Accepted RMSE ceiling in metres.
-    maximum_loop_yaw_degrees: float = 3.0,
-    maximum_loop_horizontal_error: float = 1.0,
-    maximum_loop_vertical_error: float = 1.0,
-    use_visual_registration: bool = True,
 ) -> MergeOutputs:
     """Register overlapping scan packages and write a merged LAS/LAZ point cloud.
 
@@ -85,23 +76,16 @@ def merge_scan_projects(
     or ``original_scans_dir`` is given, one LAZ file per source scan is also written
     there. Source packages are never modified.
 
+    ``registration`` carries the alignment tuning (see :class:`RegistrationParams`);
+    ``deduplicate_voxel`` and ``export_minimum_confidence`` control output only.
+    Registration and export confidence are intentionally separate: the defaults
+    align on medium+ points while writing every point to the outputs.
+
     Raises :class:`ScanProjectError` for malformed packages and :class:`ValueError`
     for inconsistent or unregisterable inputs.
     """
     projects = [ScanProject.open(path) for path in discover(inputs)]
-    result = register_scans(
-        projects,
-        voxel_size=registration_voxel,
-        minimum_confidence=registration_minimum_confidence,
-        candidate_padding=candidate_padding,
-        maximum_distance=maximum_distance,
-        minimum_overlap=minimum_overlap,
-        maximum_rmse=maximum_rmse,
-        maximum_loop_yaw_degrees=maximum_loop_yaw_degrees,
-        maximum_loop_horizontal_error=maximum_loop_horizontal_error,
-        maximum_loop_vertical_error=maximum_loop_vertical_error,
-        use_visual_registration=use_visual_registration,
-    )
+    result = register_scans(projects, registration)
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     point_count = export_merged_cloud(

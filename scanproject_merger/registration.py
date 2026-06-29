@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import combinations
-from typing import Iterable
+from typing import Iterable, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -139,13 +139,22 @@ def _fit_yaw_translation(source: NDArray[np.float64], target: NDArray[np.float64
     return rigid_transform(yaw, translation)
 
 
+class PairRegistration(NamedTuple):
+    """Result of aligning one moving cloud to a fixed cloud with ICP."""
+
+    transform: NDArray[np.float64]
+    correspondence_count: int
+    rmse: float
+    overlap_ratio: float
+
+
 def register_pair(
     fixed: NDArray[np.float64],
     moving: NDArray[np.float64],
     maximum_distance: float,
     iterations: int = 40,  # Coarse-to-fine ICP correspondence gates.
     initial_transform: NDArray[np.float64] | None = None,
-) -> tuple[NDArray[np.float64], int, float, float] | None:
+) -> PairRegistration | None:
     tree = cKDTree(fixed)
     transform = np.eye(4) if initial_transform is None else initial_transform.copy()
     minimum_gate = min(0.50, maximum_distance)  # Finish with a 50 cm correspondence gate.
@@ -168,7 +177,9 @@ def register_pair(
     count = int(keep.sum())
     if count < 12:  # Apply the same minimum to the final correspondence set.
         return None
-    return transform, count, float(np.sqrt(np.mean(np.square(distances[keep])))), count / len(moving)
+    return PairRegistration(
+        transform, count, float(np.sqrt(np.mean(np.square(distances[keep])))), count / len(moving)
+    )
 
 
 def _reachable(scan_count: int, edges: list[RegistrationEdge]) -> bool:
@@ -295,23 +306,34 @@ def optimize_pose_graph(scan_count: int, edges: list[RegistrationEdge]) -> list[
     ]
 
 
+@dataclass(frozen=True)
+class RegistrationParams:
+    """Tuning parameters for :func:`register_scans`.
+
+    Defined once here so callers (including ``merge_scan_projects``) share a single
+    source of truth rather than restating these defaults.
+    """
+
+    voxel_size: float = 0.10  # 10 cm registration sampling grid.
+    minimum_confidence: int = 1  # Exclude low-confidence (0) points from alignment.
+    candidate_padding: float = 10.0  # Metres added to bounds when finding neighbors.
+    maximum_distance: float = 5.0  # Initial ICP correspondence gate in metres.
+    minimum_overlap: float = 0.03  # Require matches for 3% of the moving sample.
+    maximum_rmse: float = 0.40  # Maximum accepted pair RMSE in metres.
+    maximum_loop_yaw_degrees: float = 3.0
+    maximum_loop_horizontal_error: float = 1.0
+    maximum_loop_vertical_error: float = 1.0
+    use_visual_registration: bool = True
+
+
 def register_scans(
     projects: list[ScanProject],
-    voxel_size: float = 0.10,  # 10 cm registration sampling grid.
-    minimum_confidence: int = 1,  # Exclude low-confidence (0) points from alignment.
-    candidate_padding: float = 10.0,  # Metres added to bounds when finding neighbors.
-    maximum_distance: float = 5.0,  # Initial ICP correspondence gate in metres.
-    minimum_overlap: float = 0.03,  # Require matches for 3% of the moving sample.
-    maximum_rmse: float = 0.40,  # Maximum accepted pair RMSE in metres.
-    maximum_loop_yaw_degrees: float = 3.0,
-    maximum_loop_horizontal_error: float = 1.0,
-    maximum_loop_vertical_error: float = 1.0,
-    use_visual_registration: bool = True,
+    params: RegistrationParams = RegistrationParams(),  # Frozen, so a shared default is safe.
 ) -> RegistrationResult:
-    scans = prepare_scans(projects, voxel_size, minimum_confidence)
+    scans = prepare_scans(projects, params.voxel_size, params.minimum_confidence)
     edges: list[RegistrationEdge] = []
     feature_cache: FeatureCache = {}  # Reuse keyframe features across pairs within this run only.
-    for fixed, moving in candidate_pairs(scans, candidate_padding):
+    for fixed, moving in candidate_pairs(scans, params.candidate_padding):
         visual = (
             register_keyframes(
                 scans[fixed].project,
@@ -320,19 +342,19 @@ def register_scans(
                 scans[moving].initial_transform,
                 cache=feature_cache,
             )
-            if use_visual_registration
+            if params.use_visual_registration
             else None
         )
         outcome = register_pair(
             scans[fixed].projected_points,
             scans[moving].projected_points,
-            min(maximum_distance, 0.75) if visual else maximum_distance,
+            min(params.maximum_distance, 0.75) if visual else params.maximum_distance,
             initial_transform=visual.moving_to_fixed if visual else None,
         )
         if outcome is None:
             continue
         transform, count, rmse, overlap = outcome
-        if overlap >= minimum_overlap and rmse <= maximum_rmse:
+        if overlap >= params.minimum_overlap and rmse <= params.maximum_rmse:
             edges.append(
                 RegistrationEdge(
                     fixed,
@@ -366,9 +388,9 @@ def register_scans(
     selected_centered_edges, rejected_centered_edges = select_consistent_edges(
         len(scans),
         centered_edges,
-        maximum_loop_yaw_degrees,
-        maximum_loop_horizontal_error,
-        maximum_loop_vertical_error,
+        params.maximum_loop_yaw_degrees,
+        params.maximum_loop_horizontal_error,
+        params.maximum_loop_vertical_error,
     )
     centered_corrections = optimize_pose_graph(len(scans), selected_centered_edges)
     corrections = [
