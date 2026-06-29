@@ -31,7 +31,7 @@ def test_world_point_reads_a_valid_depth_sample(tmp_path: Path):
     (tmp_path / "keyframes").mkdir()
     np.full(4, 2.0, dtype="<f4").tofile(tmp_path / "keyframes" / "d.bin")  # 2x2 grid, all 2.0 m
     project = types.SimpleNamespace(path=tmp_path)
-    result = _world_point(project, _single_feature(_depth_frame("d.bin", 2, 2)), 0)
+    result = _world_point(project, _single_feature(_depth_frame("d.bin", 2, 2)), 0, {})
     assert result is not None
     np.testing.assert_allclose(result, [0.0, 0.0, -2.0])
 
@@ -40,12 +40,26 @@ def test_world_point_rejects_truncated_depth_map(tmp_path: Path):
     (tmp_path / "keyframes").mkdir()
     np.full(1, 2.0, dtype="<f4").tofile(tmp_path / "keyframes" / "d.bin")  # only 1 of the declared 4 samples
     project = types.SimpleNamespace(path=tmp_path)
-    assert _world_point(project, _single_feature(_depth_frame("d.bin", 2, 2)), 0) is None
+    assert _world_point(project, _single_feature(_depth_frame("d.bin", 2, 2)), 0, {}) is None
 
 
 def test_world_point_rejects_nonpositive_dimensions(tmp_path: Path):
     project = types.SimpleNamespace(path=tmp_path)
-    assert _world_point(project, _single_feature(_depth_frame("d.bin", 0, 2)), 0) is None
+    assert _world_point(project, _single_feature(_depth_frame("d.bin", 0, 2)), 0, {}) is None
+
+
+def test_world_point_reuses_one_memmap_per_depth_file(tmp_path: Path):
+    (tmp_path / "keyframes").mkdir()
+    np.full(4, 2.0, dtype="<f4").tofile(tmp_path / "keyframes" / "d.bin")
+    project = types.SimpleNamespace(path=tmp_path)
+    features = _single_feature(_depth_frame("d.bin", 2, 2))
+    grids: dict = {}
+
+    _world_point(project, features, 0, grids)
+    _world_point(project, features, 0, grids)
+
+    # Both calls reference the same sidecar, so it is mapped exactly once.
+    assert len(grids) == 1
 
 
 def test_keyframe_file_allows_names_inside_the_keyframes_directory(tmp_path: Path):

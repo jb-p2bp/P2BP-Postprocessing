@@ -107,7 +107,31 @@ def _extract(project: ScanProject, cache: FeatureCache, maximum_keyframes: int =
     return result
 
 
-def _world_point(project: ScanProject, features: _Features, feature_index: int) -> NDArray[np.float64] | None:
+GridCache = dict[tuple[str, int], "np.memmap | None"]
+
+
+def _grid(project_path: Path, name: str, dtype: str, count: int, cache: GridCache) -> np.memmap | None:
+    """Memory-map a keyframe grid of ``count`` ``dtype`` samples.
+
+    The open map is reused across features that reference the same sidecar within
+    one run, so a keyframe's depth/confidence file is mapped once rather than once
+    per matched feature. Returns ``None`` for a missing, escaping, or too-short
+    file. The cache is keyed by (path, count) so a forged payload reusing a file
+    under a different declared shape cannot read past the mapped grid.
+    """
+    path = _keyframe_file(project_path, name)
+    if path is None:
+        return None
+    key = (str(path), count)
+    if key not in cache:
+        large_enough = path.stat().st_size >= count * np.dtype(dtype).itemsize
+        cache[key] = np.memmap(path, dtype=dtype, mode="r", shape=(count,)) if large_enough else None
+    return cache[key]
+
+
+def _world_point(
+    project: ScanProject, features: _Features, feature_index: int, grids: GridCache
+) -> NDArray[np.float64] | None:
     frame = features.frames[int(features.frame_indices[feature_index])]
     payload = frame["sceneDepthPayload"]
     width, height = int(payload["width"]), int(payload["height"])
@@ -119,21 +143,17 @@ def _world_point(project: ScanProject, features: _Features, feature_index: int) 
     depth_x = int(np.clip(round(point[0] * width / image_width), 0, width - 1))
     depth_y = int(np.clip(round(point[1] * height / image_height), 0, height - 1))
     offset = depth_y * width + depth_x
-    depth_path = _keyframe_file(project.path, payload["depthMapFilename"])
-    # A depth map shorter than width*height float32 samples would map past EOF
-    # or read out of bounds, so require the file to hold the declared grid.
-    if depth_path is None or depth_path.stat().st_size < width * height * 4:
+    depth = _grid(project.path, payload["depthMapFilename"], "<f4", height * width, grids)
+    if depth is None:
         return None
-    depth = np.memmap(depth_path, dtype="<f4", mode="r", shape=(height * width,))
     value = float(depth[offset])
     if not np.isfinite(value) or value <= 0.05 or value > 8.0:
         return None
     confidence_name = payload.get("confidenceMapFilename")
     if confidence_name:
-        confidence_path = _keyframe_file(project.path, confidence_name)
-        if confidence_path is None or confidence_path.stat().st_size < width * height:
+        confidence = _grid(project.path, confidence_name, "u1", height * width, grids)
+        if confidence is None:
             return None
-        confidence = np.memmap(confidence_path, dtype="u1", mode="r", shape=(height * width,))
         if confidence[offset] < 1:
             return None
     intrinsics = _matrix(frame["cameraIntrinsics"], 3)
@@ -179,9 +199,10 @@ def register_keyframes(
     matches = matcher.knnMatch(moving_features.descriptors, fixed_features.descriptors, k=2)
     matches = [pair[0] for pair in matches if len(pair) == 2 and pair[0].distance < 0.75 * pair[1].distance]
     fixed_points, moving_points = [], []
+    grids: GridCache = {}  # Map each keyframe depth/confidence file once per run.
     for match in matches:
-        moving_point = _world_point(moving, moving_features, match.queryIdx)
-        fixed_point = _world_point(fixed, fixed_features, match.trainIdx)
+        moving_point = _world_point(moving, moving_features, match.queryIdx, grids)
+        fixed_point = _world_point(fixed, fixed_features, match.trainIdx, grids)
         if moving_point is not None and fixed_point is not None:
             moving_points.append(moving_point)
             fixed_points.append(fixed_point)
