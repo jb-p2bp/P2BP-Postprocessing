@@ -369,6 +369,49 @@ def handle_message(
     logger.info("Message acknowledged.")
 
 
+def handle_empty_poll(
+    client: Cloudflare,
+    queue_id: str,
+    account_id: str,
+    idle_for: float,
+    instance_id: Optional[str],
+    region: str,
+) -> list[Any]:
+    """Decide what to do when a poll returns no messages.
+
+    Returns an empty list when the worker is not yet idle long enough and the
+    caller should sleep and keep polling. Once the idle limit is reached, a
+    final confirming poll is performed: if it is also empty the instance is shut
+    down (this does not return); otherwise the newly arrived messages are
+    returned for processing.
+    """
+    logger.info(f"No messages. Idle since last work: {idle_for:.0f}s")
+
+    if idle_for < IDLE_LIMIT_SECONDS:
+        return []
+
+    # Final confirming poll before stopping. This NARROWS -- but cannot close --
+    # the window between observing an empty queue and the asynchronous
+    # stop_instances call: a producer can still enqueue after this poll returns
+    # empty but before the instance stops, and because the instance still
+    # appears "on" the launcher won't start a worker to pick the message up.
+    # Fully closing this cross-system TOCTOU requires an idempotent launcher
+    # that starts the instance on every enqueue. If the confirming poll is also
+    # empty we stop; otherwise we process the new message.
+    logger.warning("Idle limit reached. Performing a final confirming poll...")
+    messages = pull_one(client, queue_id, account_id)
+
+    if not messages:
+        logger.warning("Queue confirmed empty. Shutting down EC2...")
+        ensure_shutdown("idle limit reached", instance_id, region)
+
+    logger.info(
+        "Message arrived during idle confirmation; "
+        "processing instead of shutting down."
+    )
+    return messages
+
+
 # =========================
 # MAIN LOOP
 # =========================
@@ -423,35 +466,12 @@ def main() -> None:
 
             if not messages:
                 idle_for = time.monotonic() - last_completed_work_time
-
-                logger.info(f"No messages. Idle since last work: {idle_for:.0f}s")
-
-                if idle_for < IDLE_LIMIT_SECONDS:
+                messages = handle_empty_poll(
+                    client, queue_id, account_id, idle_for, instance_id, region
+                )
+                if not messages:
                     time.sleep(POLL_INTERVAL_SECONDS)
                     continue
-
-                # Final confirming poll before stopping. This NARROWS -- but
-                # cannot close -- the window between observing an empty queue and
-                # the asynchronous stop_instances call: a producer can still
-                # enqueue after this poll returns empty but before the instance
-                # stops, and because the instance still appears "on" the launcher
-                # won't start a worker to pick the message up. Fully closing this
-                # cross-system TOCTOU requires an idempotent launcher that starts
-                # the instance on every enqueue. If the confirming poll is also
-                # empty we stop; otherwise we process the new message.
-                logger.warning(
-                    "Idle limit reached. Performing a final confirming poll..."
-                )
-                messages = pull_one(client, queue_id, account_id)
-
-                if not messages:
-                    logger.warning("Queue confirmed empty. Shutting down EC2...")
-                    ensure_shutdown("idle limit reached", instance_id, region)
-
-                logger.info(
-                    "Message arrived during idle confirmation; "
-                    "processing instead of shutting down."
-                )
 
             failure_stage = "processing"
             handle_message(client, queue_id, account_id, messages[0])
