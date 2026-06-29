@@ -22,6 +22,14 @@ This repository serves as the foundation for future point cloud processing and m
 ├── config.py
 ├── pull_queue.py
 ├── r2.py
+├── scanproject_merger/        # point cloud registration & merging library
+│   ├── __init__.py
+│   ├── format.py
+│   ├── registration.py
+│   ├── visual.py
+│   ├── export.py
+│   └── merge.py
+├── tests/
 ├── pyproject.toml
 ├── uv.lock
 └── README.md
@@ -55,6 +63,17 @@ Responsibilities:
 
 Shared configuration helpers (`require_env`, `ConfigError`) used by the other
 modules to read required environment variables.
+
+### scanproject_merger/
+
+Library that registers overlapping ScannerConsolidator `.scanproject` zones into a
+single georeferenced LAS/LAZ point cloud. It is a port of the standalone
+[`scanproject-merger`](https://github.com/ChrisMGeo/ScannerConsolidator) CLI as an
+importable library (no command-line interface). See
+[Point Cloud Registration Library](#point-cloud-registration-library) for usage.
+
+> **Note:** this library is not yet called by the queue worker. It is a building
+> block for the planned meshing pipeline and is currently exercised only by its tests.
 
 ### pyproject.toml
 
@@ -290,13 +309,39 @@ wrangler queues consumer http add <queue-name>
 
 ---
 
+# Point Cloud Registration Library
+
+`scanproject_merger` registers overlapping `.scanproject` zones and writes one merged
+LAS/LAZ point cloud plus a JSON registration report. Source packages are never
+modified; the first input scan anchors the output frame.
+
+```python
+from scanproject_merger import merge_scan_projects
+
+outputs = merge_scan_projects(
+    ["path/to/scans"],                  # .scanproject dirs, or parent dirs containing them
+    "path/to/results/merged.laz",       # merged LAS/LAZ output
+    transformed_scans_dir="path/to/results/aligned",  # optional: one aligned LAZ per source
+)
+
+print(outputs.point_count, "points ->", outputs.output)
+print("report:", outputs.report)
+```
+
+`merge_scan_projects` accepts keyword overrides for the registration and export
+tuning (voxel sizes, confidence thresholds, ICP gates, loop tolerances, and
+`use_visual_registration`); see its docstring for the full set. For finer control,
+the lower-level `register_scans` and `export_*` functions are exported directly.
+
+This library is not yet invoked by the queue worker — it is wired in as part of the
+planned meshing pipeline below.
+
+---
+
 # Future Development
 
 Planned additions include:
 
 * Continuous queue polling
 * Automatic EC2 shutdown after inactivity
-* Point cloud meshing
-
-```
-```
+* Point cloud meshing (consuming the `scanproject_merger` registration output)

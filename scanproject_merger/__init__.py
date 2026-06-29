@@ -4,6 +4,13 @@ A library port of the standalone ``scanproject-merger`` tool. The high-level
 :func:`merge_scan_projects` runs the full discover → register → export pipeline;
 the underlying ``register_scans`` and ``export_*`` functions are exposed for callers
 that need finer control.
+
+Provenance: ported from ``scanproject-merger`` branch ``feat/scanproject-merger``
+at commit ``a4a33b8``. ``format``/``registration``/``visual``/``export`` started as
+verbatim copies; later commits in this repository harden them (keyframe path and
+size validation, run-scoped feature/grid caches, point-count limit, atomic and
+collision-free output). When re-syncing from upstream, diff against that revision
+rather than assuming these files are still identical to it.
 """
 
 from .export import (
