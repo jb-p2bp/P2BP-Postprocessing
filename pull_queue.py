@@ -28,6 +28,10 @@ import signal
 import random
 import logging
 import subprocess
+import shutil
+import stat
+import zipfile
+from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn, Optional
 
 import boto3
@@ -36,6 +40,9 @@ from cloudflare import Cloudflare
 from dotenv import load_dotenv
 
 from config import ConfigError, require_env
+from mesh_jobs import MeshGenerateJob, MeshRefineJob, parse_mesh_job_message
+from r2 import create_r2_client, download_object, temp_download_dir, upload_object
+from scanproject_merger import export_merged_cloud, merge_scan_projects
 
 
 # =========================
@@ -59,6 +66,15 @@ SHUTDOWN_RETRY_SECONDS = int(os.getenv("SHUTDOWN_RETRY_SECONDS", "30"))
 
 # How long a pulled message stays invisible to other pulls before redelivery.
 VISIBILITY_TIMEOUT_MS = int(os.getenv("VISIBILITY_TIMEOUT_MS", "30000"))
+
+# Output voxel sizes. The full project cloud keeps scanproject_merger's
+# production 2 cm grid by default; the preview writes a coarser 10 cm grid.
+MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL = float(
+    os.getenv("MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL", "0.02")
+)
+PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL = float(
+    os.getenv("PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL", "0.10")
+)
 
 # EC2 Instance Metadata Service (IMDSv2). These are fixed infrastructure facts,
 # not per-deploy tunables.
@@ -316,6 +332,133 @@ class FailureTracker:
         return self._counts.get(stage, 0) >= self._limit
 
 
+def _project_output_key(job: MeshGenerateJob, filename: str) -> str:
+    return (
+        f"organizations/{job.organizationId}/projects/{job.projectId}/"
+        f"{filename}"
+    )
+
+
+def _safe_label(value: str) -> str:
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in value)
+    return safe[:80] or "scan"
+
+
+def _scanproject_stem_from_key(key: str) -> str:
+    name = os.path.basename(key.replace("\\", "/"))
+    if not name:
+        raise ValueError(f"cannot derive a scan name from object key {key!r}")
+    stem = name[:-4] if name.lower().endswith(".zip") else name
+    return _safe_label(stem)
+
+
+def _zip_member_target(destination: Path, member_name: str) -> Path:
+    normalized = member_name.replace("\\", "/")
+    if normalized.startswith("/"):
+        raise ValueError(f"zip member uses an absolute path: {member_name!r}")
+
+    path = PurePosixPath(normalized)
+    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
+        raise ValueError(f"zip member escapes the scan package: {member_name!r}")
+
+    target = destination.joinpath(*path.parts)
+    if not target.resolve().is_relative_to(destination.resolve()):
+        raise ValueError(f"zip member escapes the scan package: {member_name!r}")
+    return target
+
+
+def extract_scanproject_zip(archive: Path, destination: Path) -> Path:
+    """Extract a zipped scanproject body into a ``.scanproject`` directory."""
+
+    destination.mkdir(parents=True, exist_ok=False)
+    try:
+        with zipfile.ZipFile(archive) as zip_file:
+            members = zip_file.infolist()
+            if not members:
+                raise ValueError(f"scanproject archive is empty: {archive}")
+
+            for member in members:
+                target = _zip_member_target(destination, member.filename)
+                mode = member.external_attr >> 16
+                if stat.S_ISLNK(mode):
+                    raise ValueError(
+                        f"zip member is a symbolic link: {member.filename!r}"
+                    )
+                if member.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zip_file.open(member) as source, target.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+    except BaseException:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
+
+    manifest = destination / "manifest.json"
+    if not manifest.is_file():
+        shutil.rmtree(destination, ignore_errors=True)
+        raise ValueError(
+            f"scanproject archive {archive} did not contain manifest.json "
+            f"at its root"
+        )
+
+    return destination
+
+
+def process_generate_job(job: MeshGenerateJob) -> None:
+    r2_client = create_r2_client()
+    full_key = _project_output_key(job, "merged-point-cloud.laz")
+    preview_key = _project_output_key(job, "merged-point-cloud.preview.laz")
+
+    with temp_download_dir(f"{job.organizationId}-{job.projectId}") as workspace:
+        archives_dir = workspace / "archives"
+        scanprojects_dir = workspace / "scanprojects"
+        outputs_dir = workspace / "outputs"
+        archives_dir.mkdir()
+        scanprojects_dir.mkdir()
+        outputs_dir.mkdir()
+
+        scanproject_paths: list[Path] = []
+        for index, object_key in enumerate(job.zoneScanObjectKeys):
+            stem = _scanproject_stem_from_key(object_key)
+            archive = archives_dir / f"{index:03d}-{stem}.zip"
+            scanproject_dir = scanprojects_dir / f"{index:03d}-{stem}.scanproject"
+
+            download_object(r2_client, object_key, archive)
+            extract_scanproject_zip(archive, scanproject_dir)
+            scanproject_paths.append(scanproject_dir)
+
+        full_output = outputs_dir / "merged-point-cloud.laz"
+        preview_output = outputs_dir / "merged-point-cloud.preview.laz"
+
+        logger.info(
+            "Merging %d scanproject archive(s) for organization=%s project=%s",
+            len(scanproject_paths),
+            job.organizationId,
+            job.projectId,
+        )
+        outputs = merge_scan_projects(
+            scanproject_paths,
+            full_output,
+            deduplicate_voxel=MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL,
+            export_minimum_confidence=0,
+        )
+        preview_points = export_merged_cloud(
+            outputs.result,
+            preview_output,
+            minimum_confidence=0,
+            deduplicate_voxel=PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL,
+        )
+
+        logger.info(
+            "Uploading merged cloud (%d points) and preview (%d points)",
+            outputs.point_count,
+            preview_points,
+        )
+        upload_object(r2_client, full_output, full_key, overwrite=True)
+        upload_object(r2_client, preview_output, preview_key, overwrite=True)
+
+
 def process_message(body: Any) -> None:
     """
     MUST raise Exception on failure.
@@ -326,18 +469,16 @@ def process_message(body: Any) -> None:
 
     # Avoid logging the full payload because it may contain sensitive data.
     logger.info("Processing message with body type: %s", type(body).__name__)
+    job = parse_mesh_job_message(body)
 
-    # ----------------------------------------------------------------------
-    # TODO: IMPLEMENT REAL MESSAGE PROCESSING HERE.
-    #
-    # WARNING: This function is currently a no-op. Because it returns without
-    # raising, the caller will ACK every message, which PERMANENTLY DELETES it
-    # from the queue without doing any work. Do not run this against a queue
-    # carrying real messages until processing is implemented.
-    #
-    # Contract reminder when implementing: raise on failure (so the message is
-    # retried), return normally only on success (so the message is acked).
-    # ----------------------------------------------------------------------
+    if isinstance(job, MeshGenerateJob):
+        process_generate_job(job)
+        return
+
+    if isinstance(job, MeshRefineJob):
+        raise NotImplementedError("mesh.refine jobs are not supported yet")
+
+    raise RuntimeError(f"unsupported message type: {type(job).__name__}")
 
 
 def ack_message(
