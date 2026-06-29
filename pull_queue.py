@@ -416,12 +416,15 @@ def main() -> None:
                     time.sleep(POLL_INTERVAL_SECONDS)
                     continue
 
-                # Final confirming poll before stopping. This closes the window
-                # between observing an empty queue and the asynchronous
-                # stop_instances call: a producer can enqueue in that gap and,
-                # because the instance still appears "on", nothing else would
-                # start a worker to pick the message up. If the confirming poll
-                # is also empty we stop; otherwise we process the new message.
+                # Final confirming poll before stopping. This NARROWS -- but
+                # cannot close -- the window between observing an empty queue and
+                # the asynchronous stop_instances call: a producer can still
+                # enqueue after this poll returns empty but before the instance
+                # stops, and because the instance still appears "on" the launcher
+                # won't start a worker to pick the message up. Fully closing this
+                # cross-system TOCTOU requires an idempotent launcher that starts
+                # the instance on every enqueue. If the confirming poll is also
+                # empty we stop; otherwise we process the new message.
                 logger.warning(
                     "Idle limit reached. Performing a final confirming poll..."
                 )
