@@ -318,7 +318,7 @@ def ack_message(
     )
 
 
-def pull_one(client: Cloudflare, queue_id: str, account_id: str) -> list:
+def pull_one(client: Cloudflare, queue_id: str, account_id: str) -> list[Any]:
     """Pull a single message from the queue, returning a (possibly empty) list."""
     pull_response = client.queues.messages.pull(
         queue_id,
@@ -326,7 +326,10 @@ def pull_one(client: Cloudflare, queue_id: str, account_id: str) -> list:
         batch_size=1,
         visibility_timeout_ms=VISIBILITY_TIMEOUT_MS,
     )
-    return getattr(pull_response, "messages", [])
+    # `or []` guards against the attribute being present but None, which the
+    # SDK may return for an empty pull; a bare getattr default only covers a
+    # missing attribute.
+    return getattr(pull_response, "messages", None) or []
 
 
 def handle_message(
