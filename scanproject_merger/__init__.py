@@ -15,6 +15,8 @@ rather than assuming these files are still identical to it.
 
 from .export import (
     export_merged_cloud,
+    export_merged_cloud_bin,
+    export_merged_cloud_outputs,
     export_original_scans,
     export_transformed_scans,
     write_registration_report,
@@ -47,6 +49,8 @@ __all__ = [
     "ScanProjectError",
     "discover",
     "export_merged_cloud",
+    "export_merged_cloud_bin",
+    "export_merged_cloud_outputs",
     "export_original_scans",
     "export_transformed_scans",
     "merge_scan_projects",
