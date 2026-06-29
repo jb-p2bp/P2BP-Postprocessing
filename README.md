@@ -8,10 +8,12 @@ At the current stage of development, the instance can:
 
 * Connect to a Cloudflare Queue
 * Pull messages from the queue
-* Display message contents
-* Acknowledge messages after processing
+* Validate `MESH_JOBS` messages
+* Download zipped `.scanproject` archives from R2
+* Merge zone scans into project LAZ outputs
+* Acknowledge messages after successful processing
 
-This repository serves as the foundation for future point cloud processing and meshing functionality.
+This repository serves as the foundation for point cloud postprocessing and meshing functionality.
 
 ---
 
@@ -40,14 +42,16 @@ This repository serves as the foundation for future point cloud processing and m
 
 ### pull_queue.py
 
-Demonstration queue consumer.
+Queue worker entry point.
 
 Responsibilities:
 
 * Authenticate with Cloudflare
 * Pull messages from the configured queue
-* Display message contents
-* Acknowledge messages
+* Validate and dispatch mesh job messages
+* Stage zipped scanproject archives from R2
+* Upload merged project point-cloud outputs
+* Acknowledge messages only after successful processing
 
 ### r2.py
 
@@ -76,9 +80,9 @@ rejects any other version. The discriminated union (`MeshGenerateJob`,
 exactly (do not rename them to snake_case). Use `parse_mesh_job_message()` to
 validate an arbitrary payload into a typed variant.
 
-> **Note:** the worker does not yet dispatch on these models — it currently
-> displays and acknowledges raw messages. They are the contract for the
-> planned meshing pipeline and are currently exercised only by their tests.
+`mesh.generate` messages are processed by the queue worker. `mesh.refine`
+messages are validated but intentionally rejected until refinement is implemented,
+so they are retried instead of being acknowledged as completed.
 
 ### scanproject_merger/
 
@@ -88,8 +92,8 @@ single georeferenced LAS/LAZ point cloud. It is a port of the standalone
 importable library (no command-line interface). See
 [Point Cloud Registration Library](#point-cloud-registration-library) for usage.
 
-> **Note:** this library is not yet called by the queue worker. It is a building
-> block for the planned meshing pipeline and is currently exercised only by its tests.
+The queue worker calls this library for `mesh.generate` jobs after extracting the
+zipped `.scanproject` archives from R2.
 
 ### pyproject.toml
 
@@ -217,6 +221,16 @@ under a world- or group-writable, non-sticky directory: the download tree is
 created with strict ownership/permission checks, but those checks cannot protect
 against a hostile ancestor that could redirect the path.
 
+### MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL
+
+Optional. Output voxel size, in meters, for the canonical
+`merged-point-cloud.laz`. Defaults to `0.02`.
+
+### PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL
+
+Optional. Output voxel size, in meters, for the downsampled
+`merged-point-cloud.preview.laz`. Defaults to `0.10`.
+
 ---
 
 # Queue Requirements
@@ -255,21 +269,23 @@ uv run pull-queue
 
 # Expected Behavior
 
-When a message exists:
+When a `mesh.generate` message exists:
 
 ```text
-Pulling one message from queue...
-
-Captured message body:
-{
-  "organizationId": "org_test",
-  "projectId": "proj_test"
-}
+Processing message with body type: dict
+Downloading r2://<bucket>/<zone-scan-object-key> -> <workspace>/archives/000-zone.zip
+Merging 1 scanproject archive(s) for organization=org_test project=proj_test
+Uploading merged cloud (...) and preview (...)
 
 Acknowledging message...
 
 Message acknowledged successfully.
 ```
+
+The worker uploads:
+
+* `organizations/{orgId}/projects/{projectId}/merged-point-cloud.laz`
+* `organizations/{orgId}/projects/{projectId}/merged-point-cloud.preview.laz`
 
 When no message exists:
 
@@ -349,8 +365,8 @@ tuning (voxel sizes, confidence thresholds, ICP gates, loop tolerances, and
 `use_visual_registration`); see its docstring for the full set. For finer control,
 the lower-level `register_scans` and `export_*` functions are exported directly.
 
-This library is not yet invoked by the queue worker — it is wired in as part of the
-planned meshing pipeline below.
+The queue worker invokes this library for `mesh.generate` messages after
+downloading and extracting the R2 scan archives.
 
 ---
 
@@ -358,6 +374,5 @@ planned meshing pipeline below.
 
 Planned additions include:
 
-* Continuous queue polling
-* Automatic EC2 shutdown after inactivity
 * Point cloud meshing (consuming the `scanproject_merger` registration output)
+* Mesh refinement job processing
