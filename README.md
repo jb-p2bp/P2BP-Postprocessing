@@ -10,7 +10,7 @@ At the current stage of development, the instance can:
 * Pull messages from the queue
 * Validate `MESH_JOBS` messages
 * Download zipped `.scanproject` archives from R2
-* Merge zone scans into project LAZ outputs
+* Merge zone scans into project LAZ and BIN outputs
 * Acknowledge messages after successful processing
 
 This repository serves as the foundation for point cloud postprocessing and meshing functionality.
@@ -224,12 +224,12 @@ against a hostile ancestor that could redirect the path.
 ### MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL
 
 Optional. Output voxel size, in meters, for the canonical
-`merged-point-cloud.laz`. Defaults to `0.02`.
+`merged-point-cloud.laz` and `merged-point-cloud.bin`. Defaults to `0.02`.
 
 ### PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL
 
 Optional. Output voxel size, in meters, for the downsampled
-`merged-point-cloud.preview.laz`. Defaults to `0.10`.
+`merged-point-cloud.preview.laz` and `merged-point-cloud.preview.bin`. Defaults to `0.10`.
 
 ---
 
@@ -285,7 +285,9 @@ Message acknowledged successfully.
 The worker uploads:
 
 * `organizations/{orgId}/projects/{projectId}/merged-point-cloud.laz`
+* `organizations/{orgId}/projects/{projectId}/merged-point-cloud.bin`
 * `organizations/{orgId}/projects/{projectId}/merged-point-cloud.preview.laz`
+* `organizations/{orgId}/projects/{projectId}/merged-point-cloud.preview.bin`
 
 When no message exists:
 
@@ -344,8 +346,9 @@ wrangler queues consumer http add <queue-name>
 # Point Cloud Registration Library
 
 `scanproject_merger` registers overlapping `.scanproject` zones and writes one merged
-LAS/LAZ point cloud plus a JSON registration report. Source packages are never
-modified; the first input scan anchors the output frame.
+LAS/LAZ point cloud, an optional ScannerConsolidator-compatible BIN companion,
+and a JSON registration report. Source packages are never modified; the first
+input scan anchors the output frame.
 
 ```python
 from scanproject_merger import merge_scan_projects
@@ -353,6 +356,7 @@ from scanproject_merger import merge_scan_projects
 outputs = merge_scan_projects(
     ["path/to/scans"],                  # .scanproject dirs, or parent dirs containing them
     "path/to/results/merged.laz",       # merged LAS/LAZ output
+    bin_output="path/to/results/merged.bin",  # optional: matching packed BIN output
     transformed_scans_dir="path/to/results/aligned",  # optional: one aligned LAZ per source
 )
 
