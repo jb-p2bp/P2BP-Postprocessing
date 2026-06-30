@@ -29,19 +29,23 @@ def test_discover_rejects_empty_input(tmp_path: Path):
 def test_merge_single_scan_writes_cloud_and_report(tmp_path: Path):
     make_project(tmp_path / "one.scanproject", np.array([[0, 0, 0], [1, 2, 3], [2, 4, 6]]))
     output = tmp_path / "out" / "merged.laz"
+    bin_output = tmp_path / "out" / "merged.bin"
 
     outputs = merge_scan_projects(
         [tmp_path],
         output,
+        bin_output=bin_output,
         deduplicate_voxel=0,
         registration=RegistrationParams(minimum_confidence=0),
         export_minimum_confidence=0,
     )
 
     assert outputs.output == output
+    assert outputs.bin_output == bin_output
     assert outputs.report == output.with_suffix(".registration.json")
     assert outputs.point_count == 3
     assert outputs.report.is_file()
+    assert bin_output.is_file()
     cloud = laspy.read(output)
     assert cloud.header.parse_crs().to_epsg() == 32618
     assert len(cloud.points) == 3

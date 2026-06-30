@@ -5,6 +5,7 @@ The worker is an EC2-hosted long-runner with many external dependencies
 is practical to exercise without standing up the surrounding infrastructure.
 """
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 import zipfile
@@ -57,6 +58,26 @@ def zip_bytes(tmp_path: Path, files: dict[str, bytes]) -> bytes:
     return path.read_bytes()
 
 
+def test_pull_one_logs_pulled_messages(caplog):
+    message = SimpleNamespace(
+        lease_id="lease_123",
+        body='{"type":"mesh.generate","projectId":"proj_456"}',
+    )
+    response = SimpleNamespace(messages=[message])
+    client = SimpleNamespace(
+        queues=SimpleNamespace(
+            messages=SimpleNamespace(pull=lambda *args, **kwargs: response)
+        )
+    )
+
+    with caplog.at_level(logging.INFO, logger="queue-worker"):
+        assert pull_queue.pull_one(client, "queue_123", "account_123") == [message]
+
+    assert "Pulled 1 message(s) from queue." in caplog.text
+    assert "lease_id=lease_123" in caplog.text
+    assert '"projectId": "proj_456"' in caplog.text
+
+
 def test_process_generate_job_downloads_merges_and_uploads_outputs(
     fake_client,
     monkeypatch,
@@ -71,19 +92,26 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
     def fake_merge_scan_projects(inputs, output, **kwargs):
         captured["inputs"] = list(inputs)
         captured["output"] = output
+        captured["bin_output"] = kwargs.pop("bin_output")
         captured["merge_kwargs"] = kwargs
         captured["manifest_exists"] = (Path(inputs[0]) / "manifest.json").is_file()
         output.write_bytes(b"full")
+        captured["bin_output"].write_bytes(b"full-bin")
         return SimpleNamespace(point_count=10, result="REGISTRATION")
 
-    def fake_export_merged_cloud(result, output, **kwargs):
+    def fake_export_merged_cloud_outputs(result, **kwargs):
         captured["preview_result"] = result
+        laz_output = kwargs.pop("laz_output")
+        bin_output = kwargs.pop("bin_output")
+        captured["preview_output"] = laz_output
+        captured["preview_bin_output"] = bin_output
         captured["preview_kwargs"] = kwargs
-        output.write_bytes(b"preview")
+        laz_output.write_bytes(b"preview")
+        bin_output.write_bytes(b"preview-bin")
         return 3
 
     monkeypatch.setattr(pull_queue, "merge_scan_projects", fake_merge_scan_projects)
-    monkeypatch.setattr(pull_queue, "export_merged_cloud", fake_export_merged_cloud)
+    monkeypatch.setattr(pull_queue, "export_merged_cloud_outputs", fake_export_merged_cloud_outputs)
 
     pull_queue.process_message(
         {
@@ -110,6 +138,9 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         "export_minimum_confidence": 0,
     }
     assert captured["preview_result"] == "REGISTRATION"
+    assert captured["bin_output"].name == "merged-point-cloud.bin"
+    assert captured["preview_output"].name == "merged-point-cloud.preview.laz"
+    assert captured["preview_bin_output"].name == "merged-point-cloud.preview.bin"
     assert captured["preview_kwargs"] == {
         "minimum_confidence": 0,
         "deduplicate_voxel": pull_queue.PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL,
@@ -121,9 +152,19 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
             "organizations/org_123/projects/proj_456/merged-point-cloud.laz",
         ),
         (
+            str(Path(captured["output"]).with_name("merged-point-cloud.bin")),
+            "env-bucket",
+            "organizations/org_123/projects/proj_456/merged-point-cloud.bin",
+        ),
+        (
             str(Path(captured["output"]).with_name("merged-point-cloud.preview.laz")),
             "env-bucket",
             "organizations/org_123/projects/proj_456/merged-point-cloud.preview.laz",
+        ),
+        (
+            str(Path(captured["output"]).with_name("merged-point-cloud.preview.bin")),
+            "env-bucket",
+            "organizations/org_123/projects/proj_456/merged-point-cloud.preview.bin",
         ),
     ]
 

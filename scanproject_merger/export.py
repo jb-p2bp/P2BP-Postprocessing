@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ import laspy
 import numpy as np
 from pyproj import CRS
 
-from .format import transform_points
+from .format import POINT_DTYPE, transform_points
 from .registration import RegistrationResult
 
 
@@ -61,13 +62,44 @@ def _write_cloud(
         raise
 
 
-def export_merged_cloud(
+def _write_bin_cloud(
+    output: Path,
+    xyz: np.ndarray,
+    rgb: np.ndarray,
+    confidence: np.ndarray,
+    timestamps: np.ndarray,
+) -> None:
+    """Write ScannerConsolidator-compatible packed point records."""
+    records = np.empty(len(xyz), dtype=POINT_DTYPE)
+    records["position"] = xyz.astype(np.float32)
+    records["color"] = rgb
+    records["confidence"] = confidence
+    records["timestamp"] = timestamps
+    temp = _temp_sibling(output)
+    try:
+        records.tofile(temp)
+        os.replace(temp, output)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+
+
+@dataclass(frozen=True)
+class _CloudData:
+    xyz: np.ndarray
+    rgb: np.ndarray
+    confidence: np.ndarray
+    timestamps: np.ndarray
+    source_ids: np.ndarray
+    epsg: int
+
+
+def _merged_cloud_data(
     result: RegistrationResult,
-    output: str | Path,
-    minimum_confidence: int = 1,  # Export medium- and high-confidence points by default.
-    deduplicate_voxel: float = 0.02,  # Keep one point per 2 cm output voxel.
-) -> int:
-    """Write merged points and return the number of exported records."""
+    minimum_confidence: int,
+    deduplicate_voxel: float,
+) -> _CloudData:
+    """Build the merged output arrays shared by LAZ and BIN writers."""
     positions, colors, confidence, timestamps, source_ids = [], [], [], [], []
     for source_id, (scan, transform) in enumerate(zip(result.scans, result.final_transforms)):
         batch = scan.project.points(minimum_confidence)
@@ -93,8 +125,63 @@ def export_merged_cloud(
         )
 
     epsg = result.scans[0].project.georeference.epsg_code  # validated during preparation
-    _write_cloud(Path(output), xyz, rgb, confidence_values, timestamp_values, source_values, epsg)
-    return len(xyz)
+    return _CloudData(xyz, rgb, confidence_values, timestamp_values, source_values, epsg)
+
+
+def export_merged_cloud_outputs(
+    result: RegistrationResult,
+    laz_output: str | Path | None = None,
+    bin_output: str | Path | None = None,
+    minimum_confidence: int = 1,  # Export medium- and high-confidence points by default.
+    deduplicate_voxel: float = 0.02,  # Keep one point per 2 cm output voxel.
+) -> int:
+    """Write merged LAZ/LAS and/or BIN outputs and return the point count."""
+    if laz_output is None and bin_output is None:
+        raise ValueError("at least one output path is required")
+    data = _merged_cloud_data(result, minimum_confidence, deduplicate_voxel)
+    if laz_output is not None:
+        _write_cloud(
+            Path(laz_output),
+            data.xyz,
+            data.rgb,
+            data.confidence,
+            data.timestamps,
+            data.source_ids,
+            data.epsg,
+        )
+    if bin_output is not None:
+        _write_bin_cloud(Path(bin_output), data.xyz, data.rgb, data.confidence, data.timestamps)
+    return len(data.xyz)
+
+
+def export_merged_cloud(
+    result: RegistrationResult,
+    output: str | Path,
+    minimum_confidence: int = 1,  # Export medium- and high-confidence points by default.
+    deduplicate_voxel: float = 0.02,  # Keep one point per 2 cm output voxel.
+) -> int:
+    """Write merged points and return the number of exported records."""
+    return export_merged_cloud_outputs(
+        result,
+        laz_output=output,
+        minimum_confidence=minimum_confidence,
+        deduplicate_voxel=deduplicate_voxel,
+    )
+
+
+def export_merged_cloud_bin(
+    result: RegistrationResult,
+    output: str | Path,
+    minimum_confidence: int = 1,  # Export medium- and high-confidence points by default.
+    deduplicate_voxel: float = 0.02,  # Keep one point per 2 cm output voxel.
+) -> int:
+    """Write merged points in ScannerConsolidator's packed BIN format."""
+    return export_merged_cloud_outputs(
+        result,
+        bin_output=output,
+        minimum_confidence=minimum_confidence,
+        deduplicate_voxel=deduplicate_voxel,
+    )
 
 
 def export_transformed_scans(
