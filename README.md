@@ -282,12 +282,19 @@ Acknowledging message...
 Message acknowledged successfully.
 ```
 
-The worker uploads:
+The worker uploads under the versioned per-job prefix
+`organizations/{orgId}/projects/{projectId}/mesh-jobs/{jobId}/`:
 
-* `organizations/{orgId}/projects/{projectId}/merged-point-cloud.laz`
-* `organizations/{orgId}/projects/{projectId}/merged-point-cloud.bin`
-* `organizations/{orgId}/projects/{projectId}/merged-point-cloud.preview.laz`
-* `organizations/{orgId}/projects/{projectId}/merged-point-cloud.preview.bin`
+* `merged-point-cloud.laz`
+* `merged-point-cloud.bin`
+* `merged-point-cloud.preview.laz`
+* `merged-point-cloud.preview.bin`
+* `status.json` -- job status for the Cloudflare worker's `mesh_jobs`
+  reconciliation: written with `state: "running"` before any work,
+  `state: "completed"` after every output has been uploaded, and (best
+  effort) `state: "failed"` with an `error` before re-raising so the message
+  is redelivered. Last write wins; a successful redelivery overwrites an
+  earlier failure.
 
 When no message exists:
 
