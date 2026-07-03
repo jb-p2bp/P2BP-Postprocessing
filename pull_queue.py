@@ -31,6 +31,7 @@ import subprocess
 import shutil
 import stat
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn, Optional
 
@@ -41,7 +42,13 @@ from dotenv import load_dotenv
 
 from config import ConfigError, require_env
 from mesh_jobs import MeshGenerateJob, MeshRefineJob, parse_mesh_job_message
-from r2 import create_r2_client, download_object, temp_download_dir, upload_object
+from r2 import (
+    create_r2_client,
+    default_bucket,
+    download_object,
+    temp_download_dir,
+    upload_object,
+)
 from scanproject_merger import export_merged_cloud_outputs, merge_scan_projects
 
 
@@ -354,11 +361,72 @@ class FailureTracker:
         return self._counts.get(stage, 0) >= self._limit
 
 
-def _project_output_key(job: MeshGenerateJob, filename: str) -> str:
+def _job_output_key(job: MeshGenerateJob, filename: str) -> str:
+    """Versioned per-job output key.
+
+    Mirrors `buildMeshJobObjectKey` in
+    `p2bp-cf-worker/src/routes/api/mesh.jobs.keys.ts`; keep the two in sync.
+    """
     return (
         f"organizations/{job.organizationId}/projects/{job.projectId}/"
-        f"{filename}"
+        f"mesh-jobs/{job.jobId}/{filename}"
     )
+
+
+def _utc_now_iso() -> str:
+    """Current UTC time as an ISO-8601 string with a `Z` suffix.
+
+    The worker validates status timestamps with zod's `z.iso.datetime()`,
+    which accepts `Z` but not a `+00:00` offset.
+    """
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def write_job_status(
+    r2_client: Any,
+    job: MeshGenerateJob,
+    state: str,
+    started_at: str,
+    completed_at: Optional[str] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Write the job's `status.json` to R2 (last write wins).
+
+    The Cloudflare worker reconciles the `mesh_jobs` D1 row from this object
+    on read; the schema is pinned in
+    `p2bp-cf-worker/src/routes/api/mesh.jobs.reconciliation.ts`. Unknown extra
+    fields are ignored by the worker, so additions here are non-breaking.
+    """
+    status = {
+        "state": state,
+        "jobId": job.jobId,
+        "startedAt": started_at,
+        "completedAt": completed_at,
+        "error": error,
+    }
+    r2_client.put_object(
+        Bucket=default_bucket(),
+        Key=_job_output_key(job, "status.json"),
+        Body=json.dumps(status).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+
+def _write_job_status_failed(
+    r2_client: Any, job: MeshGenerateJob, started_at: str, error: str
+) -> None:
+    """Best-effort failed-status write: never mask the original exception."""
+    try:
+        write_job_status(
+            r2_client,
+            job,
+            state="failed",
+            started_at=started_at,
+            completed_at=_utc_now_iso(),
+            error=error,
+        )
+    except Exception:
+        logger.exception("Could not write failed job status for %s", job.jobId)
 
 
 def _safe_label(value: str) -> str:
@@ -429,11 +497,42 @@ def extract_scanproject_zip(archive: Path, destination: Path) -> Path:
 
 def process_generate_job(job: MeshGenerateJob) -> None:
     r2_client = create_r2_client()
-    full_key = _project_output_key(job, "merged-point-cloud.laz")
-    full_bin_key = _project_output_key(job, "merged-point-cloud.bin")
-    preview_key = _project_output_key(job, "merged-point-cloud.preview.laz")
-    preview_bin_key = _project_output_key(job, "merged-point-cloud.preview.bin")
+    full_key = _job_output_key(job, "merged-point-cloud.laz")
+    full_bin_key = _job_output_key(job, "merged-point-cloud.bin")
+    preview_key = _job_output_key(job, "merged-point-cloud.preview.laz")
+    preview_bin_key = _job_output_key(job, "merged-point-cloud.preview.bin")
 
+    started_at = _utc_now_iso()
+    write_job_status(r2_client, job, state="running", started_at=started_at)
+
+    try:
+        _run_generate_job(r2_client, job, full_key, full_bin_key, preview_key, preview_bin_key)
+    except BaseException as error:
+        # Record the failure for the worker's status reconciliation, then
+        # re-raise so the message stays un-acked and gets redelivered. A later
+        # successful redelivery overwrites this with a completed status.
+        _write_job_status_failed(
+            r2_client, job, started_at=started_at, error=f"{type(error).__name__}: {error}"
+        )
+        raise
+
+    write_job_status(
+        r2_client,
+        job,
+        state="completed",
+        started_at=started_at,
+        completed_at=_utc_now_iso(),
+    )
+
+
+def _run_generate_job(
+    r2_client: Any,
+    job: MeshGenerateJob,
+    full_key: str,
+    full_bin_key: str,
+    preview_key: str,
+    preview_bin_key: str,
+) -> None:
     with temp_download_dir(f"{job.organizationId}-{job.projectId}") as workspace:
         archives_dir = workspace / "archives"
         scanprojects_dir = workspace / "scanprojects"

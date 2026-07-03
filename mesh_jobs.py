@@ -34,7 +34,7 @@ __all__ = [
 MESH_GENERATE_TYPE = "mesh.generate"
 MESH_REFINE_TYPE = "mesh.refine"
 
-MESH_GENERATE_VERSION = 1
+MESH_GENERATE_VERSION = 2
 MESH_REFINE_VERSION = 1
 
 
@@ -48,10 +48,16 @@ class _MeshJobBase(BaseModel):
 
 
 class MeshGenerateJob(_MeshJobBase):
-    """Mesh generation job: build a mesh from uploaded zone scan archives."""
+    """Mesh generation job: build a mesh from uploaded zone scan archives.
+
+    Version 2 carries the worker-assigned ``jobId``; outputs and the job's
+    ``status.json`` are written under the versioned per-job prefix
+    ``organizations/{organizationId}/projects/{projectId}/mesh-jobs/{jobId}/``.
+    """
 
     type: Literal[MESH_GENERATE_TYPE] = MESH_GENERATE_TYPE
     version: Literal[MESH_GENERATE_VERSION] = MESH_GENERATE_VERSION
+    jobId: NonEmptyId
     zoneScanObjectKeys: list[str] = Field(min_length=1)
 
 

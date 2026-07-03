@@ -5,6 +5,7 @@ The worker is an EC2-hosted long-runner with many external dependencies
 is practical to exercise without standing up the surrounding infrastructure.
 """
 
+import json
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -116,7 +117,8 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
     pull_queue.process_message(
         {
             "type": "mesh.generate",
-            "version": 1,
+            "version": 2,
+            "jobId": "job_789",
             "organizationId": "org_123",
             "projectId": "proj_456",
             "zoneScanObjectKeys": ["uploads/zone-a.zip"],
@@ -145,28 +147,84 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         "minimum_confidence": 0,
         "deduplicate_voxel": pull_queue.PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL,
     }
+    job_prefix = "organizations/org_123/projects/proj_456/mesh-jobs/job_789"
     assert fake_client.upload_calls == [
         (
             str(Path(captured["output"])),
             "env-bucket",
-            "organizations/org_123/projects/proj_456/merged-point-cloud.laz",
+            f"{job_prefix}/merged-point-cloud.laz",
         ),
         (
             str(Path(captured["output"]).with_name("merged-point-cloud.bin")),
             "env-bucket",
-            "organizations/org_123/projects/proj_456/merged-point-cloud.bin",
+            f"{job_prefix}/merged-point-cloud.bin",
         ),
         (
             str(Path(captured["output"]).with_name("merged-point-cloud.preview.laz")),
             "env-bucket",
-            "organizations/org_123/projects/proj_456/merged-point-cloud.preview.laz",
+            f"{job_prefix}/merged-point-cloud.preview.laz",
         ),
         (
             str(Path(captured["output"]).with_name("merged-point-cloud.preview.bin")),
             "env-bucket",
-            "organizations/org_123/projects/proj_456/merged-point-cloud.preview.bin",
+            f"{job_prefix}/merged-point-cloud.preview.bin",
         ),
     ]
+
+    # The worker reconciles job status from these writes: running before any
+    # work, completed after every output has been uploaded.
+    assert [(bucket, key) for bucket, key, _, _ in fake_client.put_calls] == [
+        ("env-bucket", f"{job_prefix}/status.json"),
+        ("env-bucket", f"{job_prefix}/status.json"),
+    ]
+    running_status = json.loads(fake_client.put_calls[0][2])
+    completed_status = json.loads(fake_client.put_calls[1][2])
+    assert running_status["state"] == "running"
+    assert running_status["jobId"] == "job_789"
+    assert running_status["startedAt"].endswith("Z")
+    assert completed_status["state"] == "completed"
+    assert completed_status["startedAt"] == running_status["startedAt"]
+    assert completed_status["completedAt"].endswith("Z")
+    assert completed_status["error"] is None
+    assert fake_client.put_calls[0][3] == "application/json"
+
+
+def test_process_generate_job_writes_failed_status_and_reraises(
+    fake_client,
+    monkeypatch,
+    tmp_path,
+):
+    fake_client.payload = zip_bytes(tmp_path, {"manifest.json": b"{}"})
+    monkeypatch.setenv("R2_BUCKET", "env-bucket")
+    monkeypatch.setattr(pull_queue, "create_r2_client", lambda: fake_client)
+
+    def broken_merge(*args, **kwargs):
+        raise RuntimeError("registration diverged")
+
+    monkeypatch.setattr(pull_queue, "merge_scan_projects", broken_merge)
+
+    with pytest.raises(RuntimeError, match="registration diverged"):
+        pull_queue.process_message(
+            {
+                "type": "mesh.generate",
+                "version": 2,
+                "jobId": "job_789",
+                "organizationId": "org_123",
+                "projectId": "proj_456",
+                "zoneScanObjectKeys": ["uploads/zone-a.zip"],
+            }
+        )
+
+    job_prefix = "organizations/org_123/projects/proj_456/mesh-jobs/job_789"
+    states = [json.loads(body)["state"] for _, key, body, _ in fake_client.put_calls]
+    assert [key for _, key, _, _ in fake_client.put_calls] == [
+        f"{job_prefix}/status.json",
+        f"{job_prefix}/status.json",
+    ]
+    assert states == ["running", "failed"]
+    failed_status = json.loads(fake_client.put_calls[1][2])
+    assert "registration diverged" in failed_status["error"]
+    assert failed_status["completedAt"].endswith("Z")
 
 
 def test_extract_scanproject_zip_rejects_path_traversal(tmp_path):

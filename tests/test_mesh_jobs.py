@@ -17,6 +17,7 @@ from mesh_jobs import (
 class TestMeshGenerateJob:
     def test_valid_generate_message(self) -> None:
         message = MeshGenerateJob(
+            jobId="job_789",
             organizationId="org_123",
             projectId="proj_456",
             zoneScanObjectKeys=["a/b.zip", "c/d.zip"],
@@ -24,12 +25,14 @@ class TestMeshGenerateJob:
 
         assert message.type == MESH_GENERATE_TYPE
         assert message.version == MESH_GENERATE_VERSION
+        assert message.jobId == "job_789"
         assert message.organizationId == "org_123"
         assert message.projectId == "proj_456"
         assert message.zoneScanObjectKeys == ["a/b.zip", "c/d.zip"]
 
     def test_defaults_type_and_version(self) -> None:
         message = MeshGenerateJob(
+            jobId="job",
             organizationId="org",
             projectId="proj",
             zoneScanObjectKeys=["a/b.zip"],
@@ -41,6 +44,7 @@ class TestMeshGenerateJob:
     def test_empty_scan_keys_rejected(self) -> None:
         with pytest.raises(ValidationError):
             MeshGenerateJob(
+                jobId="job",
                 organizationId="org",
                 projectId="proj",
                 zoneScanObjectKeys=[],
@@ -49,14 +53,33 @@ class TestMeshGenerateJob:
     def test_missing_scan_keys_rejected(self) -> None:
         with pytest.raises(ValidationError):
             MeshGenerateJob(
+                jobId="job",
                 organizationId="org",
                 projectId="proj",
+            )
+
+    def test_missing_job_id_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MeshGenerateJob(
+                organizationId="org",
+                projectId="proj",
+                zoneScanObjectKeys=["a/b.zip"],
+            )
+
+    def test_empty_job_id_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MeshGenerateJob(
+                jobId="   ",
+                organizationId="org",
+                projectId="proj",
+                zoneScanObjectKeys=["a/b.zip"],
             )
 
     def test_explicit_type_must_match(self) -> None:
         with pytest.raises(ValidationError):
             MeshGenerateJob(
                 type=MESH_REFINE_TYPE,
+                jobId="job",
                 organizationId="org",
                 projectId="proj",
                 zoneScanObjectKeys=["a/b.zip"],
@@ -65,6 +88,7 @@ class TestMeshGenerateJob:
     def test_extra_fields_rejected(self) -> None:
         with pytest.raises(ValidationError):
             MeshGenerateJob(
+                jobId="job",
                 organizationId="org",
                 projectId="proj",
                 zoneScanObjectKeys=["a/b.zip"],
@@ -74,6 +98,7 @@ class TestMeshGenerateJob:
     def test_empty_organization_id_rejected(self) -> None:
         with pytest.raises(ValidationError):
             MeshGenerateJob(
+                jobId="job",
                 organizationId="",
                 projectId="proj",
                 zoneScanObjectKeys=["a/b.zip"],
@@ -82,6 +107,7 @@ class TestMeshGenerateJob:
     def test_empty_project_id_rejected(self) -> None:
         with pytest.raises(ValidationError):
             MeshGenerateJob(
+                jobId="job",
                 organizationId="org",
                 projectId="",
                 zoneScanObjectKeys=["a/b.zip"],
@@ -90,6 +116,7 @@ class TestMeshGenerateJob:
     def test_whitespace_only_ids_rejected(self) -> None:
         with pytest.raises(ValidationError):
             MeshGenerateJob(
+                jobId="job",
                 organizationId="   ",
                 projectId="proj",
                 zoneScanObjectKeys=["a/b.zip"],
@@ -97,11 +124,13 @@ class TestMeshGenerateJob:
 
     def test_ids_are_stripped(self) -> None:
         message = MeshGenerateJob(
+            jobId="  job  ",
             organizationId="  org  ",
             projectId="  proj  ",
             zoneScanObjectKeys=["a/b.zip"],
         )
 
+        assert message.jobId == "job"
         assert message.organizationId == "org"
         assert message.projectId == "proj"
 
@@ -152,6 +181,7 @@ class TestMeshRefineJob:
 class TestParseMeshJobMessage:
     def test_round_trips_through_serialization(self) -> None:
         original = MeshGenerateJob(
+            jobId="job",
             organizationId="org",
             projectId="proj",
             zoneScanObjectKeys=["a/b.zip", "c/d.zip"],
@@ -163,6 +193,7 @@ class TestParseMeshJobMessage:
         assert set(dumped) == {
             "type",
             "version",
+            "jobId",
             "organizationId",
             "projectId",
             "zoneScanObjectKeys",
@@ -175,6 +206,7 @@ class TestParseMeshJobMessage:
             {
                 "type": MESH_GENERATE_TYPE,
                 "version": MESH_GENERATE_VERSION,
+                "jobId": "job",
                 "organizationId": "org",
                 "projectId": "proj",
                 "zoneScanObjectKeys": ["k1", "k2"],
@@ -200,6 +232,7 @@ class TestParseMeshJobMessage:
         with pytest.raises(ValidationError):
             parse_mesh_job_message(
                 {
+                    "jobId": "job",
                     "organizationId": "org",
                     "projectId": "proj",
                     "zoneScanObjectKeys": ["a"],
@@ -218,11 +251,14 @@ class TestParseMeshJobMessage:
             )
 
     def test_wrong_version_rejected(self) -> None:
+        # Version 1 messages (pre-jobId) must fail loudly rather than be
+        # silently mis-parsed under the v2 contract.
         with pytest.raises(ValidationError):
             parse_mesh_job_message(
                 {
                     "type": MESH_GENERATE_TYPE,
-                    "version": 2,
+                    "version": 1,
+                    "jobId": "job",
                     "organizationId": "org",
                     "projectId": "proj",
                     "zoneScanObjectKeys": ["a/b.zip"],
@@ -279,6 +315,7 @@ class TestContractSnapshot:
         assert fields == {
             "type",
             "version",
+            "jobId",
             "organizationId",
             "projectId",
             "zoneScanObjectKeys",
@@ -292,5 +329,5 @@ class TestContractSnapshot:
     def test_constants_match_worker(self) -> None:
         assert MESH_GENERATE_TYPE == "mesh.generate"
         assert MESH_REFINE_TYPE == "mesh.refine"
-        assert MESH_GENERATE_VERSION == 1
+        assert MESH_GENERATE_VERSION == 2
         assert MESH_REFINE_VERSION == 1

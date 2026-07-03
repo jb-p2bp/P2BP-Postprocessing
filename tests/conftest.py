@@ -33,8 +33,9 @@ class FakeClient:
 
     `download_file` writes `payload` to the destination, mirroring a real
     transfer. `upload_file` records the call and marks the key as present so a
-    later `head_object` (used by the upload clobber check) sees it. `existing`
-    seeds keys that should already look present before any call.
+    later `head_object` (used by the upload clobber check) sees it.
+    `put_object` records small direct writes (e.g. mesh job status.json).
+    `existing` seeds keys that should already look present before any call.
     """
 
     def __init__(
@@ -45,6 +46,7 @@ class FakeClient:
         self.payload = payload
         self.calls: list[tuple[str, str, str]] = []  # download_file(bucket, key, dest)
         self.upload_calls: list[tuple[str, str, str]] = []  # upload_file(source, bucket, key)
+        self.put_calls: list[tuple[str, str, bytes, str | None]] = []  # put_object
         self.existing: set[str] = set(existing or ())
 
     def download_file(self, bucket: str, key: str, dest: str) -> None:
@@ -55,6 +57,16 @@ class FakeClient:
     def upload_file(self, source: str, bucket: str, key: str) -> None:
         self.upload_calls.append((source, bucket, key))
         self.existing.add(key)
+
+    def put_object(
+        self,
+        Bucket: str,
+        Key: str,
+        Body: bytes,
+        ContentType: str | None = None,
+    ) -> None:
+        self.put_calls.append((Bucket, Key, Body, ContentType))
+        self.existing.add(Key)
 
     def head_object(self, Bucket: str, Key: str) -> dict:
         if Key in self.existing:
