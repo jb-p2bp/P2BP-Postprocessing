@@ -223,7 +223,14 @@ def test_process_generate_job_writes_failed_status_and_reraises(
     ]
     assert states == ["running", "failed"]
     failed_status = json.loads(fake_client.put_calls[1][2])
-    assert "registration diverged" in failed_status["error"]
+    # The public error is an allowlisted category (exception class only);
+    # raw exception text may embed paths/endpoints and must never leak into
+    # status.json, which the worker surfaces to every project viewer.
+    assert failed_status["error"] == (
+        "RuntimeError while processing the mesh job; "
+        "details are in the consumer logs"
+    )
+    assert "registration diverged" not in failed_status["error"]
     assert failed_status["completedAt"].endswith("Z")
 
 

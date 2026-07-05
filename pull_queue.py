@@ -412,6 +412,22 @@ def write_job_status(
     )
 
 
+def _public_error_summary(error: BaseException) -> str:
+    """Allowlisted public error for status.json: exception class name only.
+
+    Raw exception text routinely embeds local filesystem paths, bucket
+    endpoints, and R2 object keys, and the Cloudflare worker surfaces
+    status.json's `error` to every project viewer. The full detail is already
+    captured in this worker's own logs (the main loop logs the re-raised
+    exception with logger.exception), so the public record carries only the
+    exception class -- a category, never interpolated message text.
+    """
+    return (
+        f"{type(error).__name__} while processing the mesh job; "
+        f"details are in the consumer logs"
+    )
+
+
 def _write_job_status_failed(
     r2_client: Any, job: MeshGenerateJob, started_at: str, error: str
 ) -> None:
@@ -512,7 +528,7 @@ def process_generate_job(job: MeshGenerateJob) -> None:
         # re-raise so the message stays un-acked and gets redelivered. A later
         # successful redelivery overwrites this with a completed status.
         _write_job_status_failed(
-            r2_client, job, started_at=started_at, error=f"{type(error).__name__}: {error}"
+            r2_client, job, started_at=started_at, error=_public_error_summary(error)
         )
         raise
 
