@@ -33,7 +33,7 @@ import stat
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, NoReturn, Optional
+from typing import Any, Literal, NoReturn, Optional
 
 import boto3
 import requests
@@ -382,10 +382,24 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# The exact states the Cloudflare worker's status schema accepts
+# (`meshJobStatusFileSchema` in `p2bp-cf-worker/src/lib/mesh/job-contract.ts`).
+# Anything else is silently treated as "no evidence" by the worker and would
+# surface 24h later as a bogus timeout, so an unknown state must fail loudly
+# here instead. `Literal` alone is not runtime-enforced, hence the guard in
+# write_job_status.
+MeshJobStatusState = Literal["running", "completed", "failed"]
+MESH_JOB_STATUS_STATES: tuple[MeshJobStatusState, ...] = (
+    "running",
+    "completed",
+    "failed",
+)
+
+
 def write_job_status(
     r2_client: Any,
     job: MeshGenerateJob,
-    state: str,
+    state: MeshJobStatusState,
     started_at: str,
     completed_at: Optional[str] = None,
     error: Optional[str] = None,
@@ -394,9 +408,12 @@ def write_job_status(
 
     The Cloudflare worker reconciles the `mesh_jobs` D1 row from this object
     on read; the schema is pinned in
-    `p2bp-cf-worker/src/routes/api/mesh.jobs.reconciliation.ts`. Unknown extra
-    fields are ignored by the worker, so additions here are non-breaking.
+    `p2bp-cf-worker/src/lib/mesh/job-contract.ts`. Unknown extra fields are
+    ignored by the worker, so additions here are non-breaking.
     """
+    if state not in MESH_JOB_STATUS_STATES:
+        raise ValueError(f"invalid mesh job status state: {state!r}")
+
     status = {
         "state": state,
         "jobId": job.jobId,

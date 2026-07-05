@@ -263,3 +263,33 @@ def test_process_message_rejects_refine_jobs():
                 "projectId": "proj",
             }
         )
+
+
+def test_write_job_status_rejects_unknown_state(fake_client, monkeypatch):
+    monkeypatch.setenv("R2_BUCKET", "env-bucket")
+    job = pull_queue.parse_mesh_job_message(
+        {
+            "type": "mesh.generate",
+            "version": 2,
+            "jobId": "job_789",
+            "organizationId": "org_123",
+            "projectId": "proj_456",
+            "zoneScanObjectKeys": ["uploads/zone-a.zip"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="invalid mesh job status state"):
+        pull_queue.write_job_status(
+            fake_client,
+            job,
+            state="complete",  # type: ignore[arg-type]
+            started_at="2026-07-04T00:00:00Z",
+        )
+
+    assert fake_client.put_calls == []
+
+
+def test_status_states_match_worker_contract():
+    """Pin against `meshJobStatusFileSchema` in
+    `p2bp-cf-worker/src/lib/mesh/job-contract.ts`; update both together."""
+    assert pull_queue.MESH_JOB_STATUS_STATES == ("running", "completed", "failed")
