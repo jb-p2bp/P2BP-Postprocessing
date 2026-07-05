@@ -68,7 +68,11 @@ IDLE_LIMIT_SECONDS = int(os.getenv("IDLE_LIMIT_SECONDS", "60"))
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "15"))
 MAX_CONSECUTIVE_FAILURES = int(os.getenv("MAX_CONSECUTIVE_FAILURES", "10"))
 MAX_BACKOFF_SECONDS = int(os.getenv("MAX_BACKOFF_SECONDS", "300"))
-MAX_RUNTIME_SECONDS = int(os.getenv("MAX_RUNTIME_SECONDS", "43200"))  # 12h default
+# 12h default. The Cloudflare worker fails jobs with no terminal status 24h
+# after creation (`meshJobTimeoutMs` in
+# `p2bp-cf-worker/src/routes/api/mesh.jobs.reconciliation.ts`); raising this
+# past ~24h would make legitimately long runs get misreported as timed out.
+MAX_RUNTIME_SECONDS = int(os.getenv("MAX_RUNTIME_SECONDS", "43200"))
 SHUTDOWN_RETRY_SECONDS = int(os.getenv("SHUTDOWN_RETRY_SECONDS", "30"))
 
 # How long a pulled message stays invisible to other pulls before redelivery.
