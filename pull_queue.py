@@ -380,8 +380,9 @@ def _job_output_key(job: MeshGenerateJob, filename: str) -> str:
 def _utc_now_iso() -> str:
     """Current UTC time as an ISO-8601 string with a `Z` suffix.
 
-    The worker validates status timestamps with zod's `z.iso.datetime()`,
-    which accepts `Z` but not a `+00:00` offset.
+    The worker's status schema (`meshJobStatusFileSchema` in
+    `p2bp-cf-worker/src/lib/mesh/job-contract.ts`) accepts both `Z` and
+    `+HH:MM` offsets; `Z` is kept as the canonical form written here.
     """
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
