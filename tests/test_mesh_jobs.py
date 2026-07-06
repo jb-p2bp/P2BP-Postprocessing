@@ -303,7 +303,7 @@ class TestParseMeshJobMessage:
 
 class TestContractSnapshot:
     """Pin the field names and constants to a manual transcription of the
-    p2bp-cf-worker contract in `src/routes/api/mesh.jobs.builder.ts`.
+    p2bp-cf-worker contract in `src/lib/mesh/job-contract.ts`.
 
     These assertions only catch drift on the Python side -- they do not read
     the TypeScript file, so a change to the worker contract must be mirrored
