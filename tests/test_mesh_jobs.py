@@ -331,3 +331,13 @@ class TestContractSnapshot:
         assert MESH_REFINE_TYPE == "mesh.refine"
         assert MESH_GENERATE_VERSION == 2
         assert MESH_REFINE_VERSION == 1
+
+    def test_output_filenames_match_worker(self) -> None:
+        from pull_queue import MESH_JOB_OUTPUT_FILENAMES
+
+        assert MESH_JOB_OUTPUT_FILENAMES == {
+            "fullLaz": "merged-point-cloud.laz",
+            "fullBin": "merged-point-cloud.bin",
+            "previewLaz": "merged-point-cloud.preview.laz",
+            "previewBin": "merged-point-cloud.preview.bin",
+        }

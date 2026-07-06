@@ -400,6 +400,13 @@ MESH_JOB_STATUS_STATES: tuple[MeshJobStatusState, ...] = (
     "failed",
 )
 
+MESH_JOB_OUTPUT_FILENAMES = {
+    "fullLaz": "merged-point-cloud.laz",
+    "fullBin": "merged-point-cloud.bin",
+    "previewLaz": "merged-point-cloud.preview.laz",
+    "previewBin": "merged-point-cloud.preview.bin",
+}
+
 
 def write_job_status(
     r2_client: Any,
@@ -535,10 +542,10 @@ def extract_scanproject_zip(archive: Path, destination: Path) -> Path:
 
 def process_generate_job(job: MeshGenerateJob) -> None:
     r2_client = create_r2_client()
-    full_key = _job_output_key(job, "merged-point-cloud.laz")
-    full_bin_key = _job_output_key(job, "merged-point-cloud.bin")
-    preview_key = _job_output_key(job, "merged-point-cloud.preview.laz")
-    preview_bin_key = _job_output_key(job, "merged-point-cloud.preview.bin")
+    full_key = _job_output_key(job, MESH_JOB_OUTPUT_FILENAMES["fullLaz"])
+    full_bin_key = _job_output_key(job, MESH_JOB_OUTPUT_FILENAMES["fullBin"])
+    preview_key = _job_output_key(job, MESH_JOB_OUTPUT_FILENAMES["previewLaz"])
+    preview_bin_key = _job_output_key(job, MESH_JOB_OUTPUT_FILENAMES["previewBin"])
 
     started_at = _utc_now_iso()
     write_job_status(r2_client, job, state="running", started_at=started_at)
@@ -589,10 +596,10 @@ def _run_generate_job(
             extract_scanproject_zip(archive, scanproject_dir)
             scanproject_paths.append(scanproject_dir)
 
-        full_output = outputs_dir / "merged-point-cloud.laz"
-        full_bin_output = outputs_dir / "merged-point-cloud.bin"
-        preview_output = outputs_dir / "merged-point-cloud.preview.laz"
-        preview_bin_output = outputs_dir / "merged-point-cloud.preview.bin"
+        full_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["fullLaz"]
+        full_bin_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["fullBin"]
+        preview_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["previewLaz"]
+        preview_bin_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["previewBin"]
 
         logger.info(
             "Merging %d scanproject archive(s) for organization=%s project=%s",
