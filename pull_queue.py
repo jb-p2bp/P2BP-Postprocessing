@@ -75,8 +75,18 @@ MAX_BACKOFF_SECONDS = int(os.getenv("MAX_BACKOFF_SECONDS", "300"))
 MAX_RUNTIME_SECONDS = int(os.getenv("MAX_RUNTIME_SECONDS", "43200"))
 SHUTDOWN_RETRY_SECONDS = int(os.getenv("SHUTDOWN_RETRY_SECONDS", "30"))
 
-# How long a pulled message stays invisible to other pulls before redelivery.
-VISIBILITY_TIMEOUT_MS = int(os.getenv("VISIBILITY_TIMEOUT_MS", "30000"))
+# How long a pulled message stays invisible before redelivery. It must outlast
+# the longest a single job can hold the lease before it is acked -- messages are
+# acked only after the full merge completes (see handle_message), so a timeout
+# shorter than the run lets the lease expire mid-merge, the ack then targets an
+# expired lease, and the message is redelivered and reprocessed (wasted compute,
+# and a long job may never ack). A single job is bounded by MAX_RUNTIME_SECONDS,
+# so default to that, clamped to Cloudflare Queues' 12h maximum.
+CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS = 43_200_000
+VISIBILITY_TIMEOUT_MS = min(
+    int(os.getenv("VISIBILITY_TIMEOUT_MS", str(MAX_RUNTIME_SECONDS * 1000))),
+    CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS,
+)
 
 # Output voxel sizes. The full project cloud keeps scanproject_merger's
 # production 2 cm grid by default; the preview writes a coarser 10 cm grid.

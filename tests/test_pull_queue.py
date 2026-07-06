@@ -79,6 +79,32 @@ def test_pull_one_logs_pulled_messages(caplog):
     assert '"projectId": "proj_456"' in caplog.text
 
 
+def test_pull_one_leases_long_enough_to_outlast_a_job():
+    captured: dict[str, object] = {}
+
+    def fake_pull(*args, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(messages=[])
+
+    client = SimpleNamespace(
+        queues=SimpleNamespace(messages=SimpleNamespace(pull=fake_pull))
+    )
+
+    pull_queue.pull_one(client, "queue_123", "account_123")
+
+    # A message is acked only after the full merge completes, so the lease must
+    # outlast the longest a single job can run -- otherwise the ack races an
+    # expired lease and the message is redelivered and reprocessed.
+    assert (
+        captured["visibility_timeout_ms"] >= pull_queue.MAX_RUNTIME_SECONDS * 1000
+    )
+    # ...and stay within Cloudflare Queues' 12h maximum.
+    assert (
+        captured["visibility_timeout_ms"]
+        <= pull_queue.CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS
+    )
+
+
 def test_process_generate_job_downloads_merges_and_uploads_outputs(
     fake_client,
     monkeypatch,
