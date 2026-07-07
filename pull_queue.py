@@ -69,28 +69,30 @@ IDLE_LIMIT_SECONDS = int(os.getenv("IDLE_LIMIT_SECONDS", "60"))
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "15"))
 MAX_CONSECUTIVE_FAILURES = int(os.getenv("MAX_CONSECUTIVE_FAILURES", "10"))
 MAX_BACKOFF_SECONDS = int(os.getenv("MAX_BACKOFF_SECONDS", "300"))
-# 12h default. The Cloudflare worker fails jobs with no terminal status 24h
-# after creation (`meshJobTimeoutMs` in
+# 12h consumer contract. The default process runtime stays lower so a
+# max-runtime job still has time to upload outputs and ack before the queue
+# lease can expire. The Cloudflare worker fails jobs with no terminal status
+# 24h after creation (`meshJobTimeoutMs` in
 # `p2bp-cf-worker/src/routes/api/mesh.jobs.reconciliation.ts`); raising this
 # past ~24h would make legitimately long runs get misreported as timed out.
 MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS = 43_200
+DEFAULT_MAX_RUNTIME_SECONDS = MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS - 10 * 60
 MAX_RUNTIME_SECONDS = int(
-    os.getenv("MAX_RUNTIME_SECONDS", str(MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS))
+    os.getenv("MAX_RUNTIME_SECONDS", str(DEFAULT_MAX_RUNTIME_SECONDS))
 )
 SHUTDOWN_RETRY_SECONDS = int(os.getenv("SHUTDOWN_RETRY_SECONDS", "30"))
 
 # How long a pulled message stays invisible before redelivery. It must outlast
 # the longest a single job can hold the lease before it is acked -- messages are
 # acked only after the full merge completes (see handle_message), so a timeout
-# shorter than the run lets the lease expire mid-merge, the ack then targets an
-# expired lease, and the message is redelivered and reprocessed (wasted compute,
-# and a long job may never ack). A single job is bounded by MAX_RUNTIME_SECONDS,
-# so default to that, clamped to Cloudflare Queues' 12h maximum.
+# shorter than the run plus output upload/ack buffer lets the lease expire
+# mid-merge, the ack then targets an expired lease, and the message is
+# redelivered and reprocessed (wasted compute, and a long job may never ack).
 CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS = (
     MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS * 1000
 )
 VISIBILITY_TIMEOUT_MS = int(
-    os.getenv("VISIBILITY_TIMEOUT_MS", str(MAX_RUNTIME_SECONDS * 1000))
+    os.getenv("VISIBILITY_TIMEOUT_MS", str(CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS))
 )
 
 # Output voxel sizes. The full project cloud keeps scanproject_merger's
@@ -165,6 +167,12 @@ def validate_runtime_contract() -> None:
         raise ConfigError(
             "VISIBILITY_TIMEOUT_MS must be at least MAX_RUNTIME_SECONDS * 1000 "
             "so a job can ack before its queue lease expires."
+        )
+
+    if VISIBILITY_TIMEOUT_MS == MAX_RUNTIME_SECONDS * 1000:
+        raise ConfigError(
+            "VISIBILITY_TIMEOUT_MS must leave headroom above MAX_RUNTIME_SECONDS "
+            "for output uploads and message ack."
         )
 
 

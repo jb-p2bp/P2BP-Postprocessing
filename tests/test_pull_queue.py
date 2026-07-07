@@ -93,7 +93,7 @@ def test_pull_one_logs_pulled_messages(caplog):
 
 def test_pull_one_leases_long_enough_to_outlast_a_job(monkeypatch):
     monkeypatch.setattr(pull_queue, "MAX_RUNTIME_SECONDS", 60)
-    monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 60_000)
+    monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 61_000)
 
     captured: dict[str, object] = {}
 
@@ -136,6 +136,16 @@ def test_runtime_contract_rejects_short_visibility_timeout(monkeypatch):
     monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 59_999)
 
     with pytest.raises(config.ConfigError, match="VISIBILITY_TIMEOUT_MS"):
+        pull_queue.validate_runtime_contract()
+
+
+def test_runtime_contract_rejects_visibility_timeout_without_headroom(
+    monkeypatch,
+):
+    monkeypatch.setattr(pull_queue, "MAX_RUNTIME_SECONDS", 60)
+    monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 60_000)
+
+    with pytest.raises(config.ConfigError, match="headroom"):
         pull_queue.validate_runtime_contract()
 
 
