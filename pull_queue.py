@@ -100,6 +100,9 @@ MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL = float(
 PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL = float(
     os.getenv("PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL", "0.10")
 )
+SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES = int(
+    os.getenv("SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES", str(4 * 1024 * 1024 * 1024))
+)
 
 # EC2 Instance Metadata Service (IMDSv2). These are fixed infrastructure facts,
 # not per-deploy tunables.
@@ -559,6 +562,13 @@ def extract_scanproject_zip(archive: Path, destination: Path) -> Path:
             members = zip_file.infolist()
             if not members:
                 raise ValueError(f"scanproject archive is empty: {archive}")
+            total_uncompressed_size = sum(member.file_size for member in members)
+            if total_uncompressed_size > SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES:
+                raise ValueError(
+                    f"scanproject archive expands to {total_uncompressed_size} "
+                    "bytes, which exceeds the configured limit of "
+                    f"{SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES} bytes"
+                )
 
             for member in members:
                 target = _zip_member_target(destination, member.filename)

@@ -326,6 +326,22 @@ def test_extract_scanproject_zip_requires_root_manifest(tmp_path):
     assert not (tmp_path / "out.scanproject").exists()
 
 
+def test_extract_scanproject_zip_rejects_oversized_expansion(monkeypatch, tmp_path):
+    archive = make_zip(
+        tmp_path / "huge.zip",
+        {
+            "manifest.json": b"{}",
+            "point-cloud.bin": b"x" * 11,
+        },
+    )
+    monkeypatch.setattr(pull_queue, "SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES", 10)
+
+    with pytest.raises(ValueError, match="exceeds the configured limit"):
+        pull_queue.extract_scanproject_zip(archive, tmp_path / "out.scanproject")
+
+    assert not (tmp_path / "out.scanproject").exists()
+
+
 def test_process_message_rejects_refine_jobs():
     with pytest.raises(NotImplementedError):
         pull_queue.process_message(
