@@ -177,11 +177,22 @@ def parse_body(body: Any) -> Any:
     return body
 
 
-def _message_body_for_log(message: Any) -> str:
+def _message_body_summary_for_log(message: Any) -> str:
     body = parse_body(getattr(message, "body", None))
-    if isinstance(body, (dict, list)):
-        return json.dumps(body, sort_keys=True)
-    return repr(body)
+    if not isinstance(body, dict):
+        return f"body_type={type(body).__name__}"
+
+    parts = [f"body_type=dict"]
+    if "type" in body:
+        parts.append(f"type={body['type']!r}")
+    if "version" in body:
+        parts.append(f"version={body['version']!r}")
+
+    zone_scan_keys = body.get("zoneScanObjectKeys")
+    if isinstance(zone_scan_keys, list):
+        parts.append(f"zone_scan_key_count={len(zone_scan_keys)}")
+
+    return " ".join(parts)
 
 
 def log_pulled_messages(messages: list[Any]) -> None:
@@ -191,11 +202,11 @@ def log_pulled_messages(messages: list[Any]) -> None:
     logger.info("Pulled %d message(s) from queue.", len(messages))
     for index, message in enumerate(messages, start=1):
         logger.info(
-            "Pulled message %d/%d lease_id=%s body=%s",
+            "Pulled message %d/%d lease_id=%s %s",
             index,
             len(messages),
             getattr(message, "lease_id", None),
-            _message_body_for_log(message),
+            _message_body_summary_for_log(message),
         )
 
 

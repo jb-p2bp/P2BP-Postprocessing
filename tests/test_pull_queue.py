@@ -62,7 +62,15 @@ def zip_bytes(tmp_path: Path, files: dict[str, bytes]) -> bytes:
 def test_pull_one_logs_pulled_messages(caplog):
     message = SimpleNamespace(
         lease_id="lease_123",
-        body='{"type":"mesh.generate","projectId":"proj_456"}',
+        body=json.dumps(
+            {
+                "type": "mesh.generate",
+                "version": 2,
+                "organizationId": "org_123",
+                "projectId": "proj_456",
+                "zoneScanObjectKeys": ["organizations/org_123/private.zip"],
+            }
+        ),
     )
     response = SimpleNamespace(messages=[message])
     client = SimpleNamespace(
@@ -76,7 +84,11 @@ def test_pull_one_logs_pulled_messages(caplog):
 
     assert "Pulled 1 message(s) from queue." in caplog.text
     assert "lease_id=lease_123" in caplog.text
-    assert '"projectId": "proj_456"' in caplog.text
+    assert "type='mesh.generate'" in caplog.text
+    assert "version=2" in caplog.text
+    assert "zone_scan_key_count=1" in caplog.text
+    assert "proj_456" not in caplog.text
+    assert "organizations/org_123/private.zip" not in caplog.text
 
 
 def test_pull_one_leases_long_enough_to_outlast_a_job(monkeypatch):
