@@ -452,10 +452,10 @@ MESH_JOB_STATUS_STATES: tuple[MeshJobStatusState, ...] = (
 )
 
 MESH_JOB_OUTPUT_FILENAMES = {
-    "fullLaz": "merged-point-cloud.laz",
-    "fullBin": "merged-point-cloud.bin",
-    "previewLaz": "merged-point-cloud.preview.laz",
-    "previewBin": "merged-point-cloud.preview.bin",
+    "pointCloud": "merged-point-cloud.laz",
+    "pointCloudBin": "merged-point-cloud.bin",
+    "pointCloudPreview": "merged-point-cloud.preview.laz",
+    "pointCloudPreviewBin": "merged-point-cloud.preview.bin",
 }
 
 MeshJobOutputKeys = dict[str, str]
@@ -653,10 +653,10 @@ def _run_generate_job(
             extract_scanproject_zip(archive, scanproject_dir)
             scanproject_paths.append(scanproject_dir)
 
-        full_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["fullLaz"]
-        full_bin_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["fullBin"]
-        preview_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["previewLaz"]
-        preview_bin_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["previewBin"]
+        full_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloud"]
+        full_bin_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudBin"]
+        preview_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudPreview"]
+        preview_bin_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudPreviewBin"]
 
         logger.info(
             "Merging %d scanproject archive(s) for organization=%s project=%s",
@@ -684,13 +684,18 @@ def _run_generate_job(
             outputs.point_count,
             preview_points,
         )
-        upload_object(r2_client, full_output, output_keys["fullLaz"], overwrite=True)
-        upload_object(r2_client, full_bin_output, output_keys["fullBin"], overwrite=True)
-        upload_object(r2_client, preview_output, output_keys["previewLaz"], overwrite=True)
+        upload_object(r2_client, full_output, output_keys["pointCloud"], overwrite=True)
+        upload_object(r2_client, full_bin_output, output_keys["pointCloudBin"], overwrite=True)
+        upload_object(
+            r2_client,
+            preview_output,
+            output_keys["pointCloudPreview"],
+            overwrite=True,
+        )
         upload_object(
             r2_client,
             preview_bin_output,
-            output_keys["previewBin"],
+            output_keys["pointCloudPreviewBin"],
             overwrite=True,
         )
 

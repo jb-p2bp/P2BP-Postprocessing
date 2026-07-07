@@ -336,10 +336,10 @@ class TestContractSnapshot:
         from pull_queue import MESH_JOB_OUTPUT_FILENAMES
 
         assert MESH_JOB_OUTPUT_FILENAMES == {
-            "fullLaz": "merged-point-cloud.laz",
-            "fullBin": "merged-point-cloud.bin",
-            "previewLaz": "merged-point-cloud.preview.laz",
-            "previewBin": "merged-point-cloud.preview.bin",
+            "pointCloud": "merged-point-cloud.laz",
+            "pointCloudBin": "merged-point-cloud.bin",
+            "pointCloudPreview": "merged-point-cloud.preview.laz",
+            "pointCloudPreviewBin": "merged-point-cloud.preview.bin",
         }
 
     def test_runtime_cap_matches_worker(self) -> None:
