@@ -72,7 +72,10 @@ MAX_BACKOFF_SECONDS = int(os.getenv("MAX_BACKOFF_SECONDS", "300"))
 # after creation (`meshJobTimeoutMs` in
 # `p2bp-cf-worker/src/routes/api/mesh.jobs.reconciliation.ts`); raising this
 # past ~24h would make legitimately long runs get misreported as timed out.
-MAX_RUNTIME_SECONDS = int(os.getenv("MAX_RUNTIME_SECONDS", "43200"))
+MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS = 43_200
+MAX_RUNTIME_SECONDS = int(
+    os.getenv("MAX_RUNTIME_SECONDS", str(MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS))
+)
 SHUTDOWN_RETRY_SECONDS = int(os.getenv("SHUTDOWN_RETRY_SECONDS", "30"))
 
 # How long a pulled message stays invisible before redelivery. It must outlast
@@ -82,10 +85,11 @@ SHUTDOWN_RETRY_SECONDS = int(os.getenv("SHUTDOWN_RETRY_SECONDS", "30"))
 # expired lease, and the message is redelivered and reprocessed (wasted compute,
 # and a long job may never ack). A single job is bounded by MAX_RUNTIME_SECONDS,
 # so default to that, clamped to Cloudflare Queues' 12h maximum.
-CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS = 43_200_000
-VISIBILITY_TIMEOUT_MS = min(
-    int(os.getenv("VISIBILITY_TIMEOUT_MS", str(MAX_RUNTIME_SECONDS * 1000))),
-    CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS,
+CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS = (
+    MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS * 1000
+)
+VISIBILITY_TIMEOUT_MS = int(
+    os.getenv("VISIBILITY_TIMEOUT_MS", str(MAX_RUNTIME_SECONDS * 1000))
 )
 
 # Output voxel sizes. The full project cloud keeps scanproject_merger's
@@ -135,6 +139,29 @@ def configure_runtime() -> None:
     )
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
+
+
+def validate_runtime_contract() -> None:
+    """Fail fast when runtime knobs drift from the Worker contract."""
+
+    if MAX_RUNTIME_SECONDS > MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS:
+        raise ConfigError(
+            "MAX_RUNTIME_SECONDS cannot exceed "
+            f"{MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS}; update the Worker "
+            "meshJobConsumerRuntimeCapMs contract before raising it."
+        )
+
+    if VISIBILITY_TIMEOUT_MS > CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS:
+        raise ConfigError(
+            "VISIBILITY_TIMEOUT_MS cannot exceed Cloudflare Queues' "
+            f"{CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS}ms maximum."
+        )
+
+    if VISIBILITY_TIMEOUT_MS < MAX_RUNTIME_SECONDS * 1000:
+        raise ConfigError(
+            "VISIBILITY_TIMEOUT_MS must be at least MAX_RUNTIME_SECONDS * 1000 "
+            "so a job can ack before its queue lease expires."
+        )
 
 
 # =========================
@@ -764,6 +791,7 @@ def handle_empty_poll(
 
 def main() -> None:
     configure_runtime()
+    validate_runtime_contract()
 
     try:
         account_id = require_env("CLOUDFLARE_ACCOUNT_ID")

@@ -105,6 +105,38 @@ def test_pull_one_leases_long_enough_to_outlast_a_job():
     )
 
 
+def test_runtime_contract_rejects_runtime_above_worker_cap(monkeypatch):
+    monkeypatch.setattr(
+        pull_queue,
+        "MAX_RUNTIME_SECONDS",
+        pull_queue.MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS + 1,
+    )
+
+    with pytest.raises(config.ConfigError, match="MAX_RUNTIME_SECONDS"):
+        pull_queue.validate_runtime_contract()
+
+
+def test_runtime_contract_rejects_short_visibility_timeout(monkeypatch):
+    monkeypatch.setattr(pull_queue, "MAX_RUNTIME_SECONDS", 60)
+    monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 59_999)
+
+    with pytest.raises(config.ConfigError, match="VISIBILITY_TIMEOUT_MS"):
+        pull_queue.validate_runtime_contract()
+
+
+def test_runtime_contract_rejects_visibility_timeout_above_cloudflare_cap(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        pull_queue,
+        "VISIBILITY_TIMEOUT_MS",
+        pull_queue.CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS + 1,
+    )
+
+    with pytest.raises(config.ConfigError, match="VISIBILITY_TIMEOUT_MS"):
+        pull_queue.validate_runtime_contract()
+
+
 def test_process_generate_job_downloads_merges_and_uploads_outputs(
     fake_client,
     monkeypatch,

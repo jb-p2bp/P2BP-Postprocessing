@@ -341,3 +341,10 @@ class TestContractSnapshot:
             "previewLaz": "merged-point-cloud.preview.laz",
             "previewBin": "merged-point-cloud.preview.bin",
         }
+
+    def test_runtime_cap_matches_worker(self) -> None:
+        from pull_queue import MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS
+
+        # Mirrors `meshJobConsumerRuntimeCapMs` in
+        # p2bp-cf-worker/src/lib/mesh/job-contract.ts.
+        assert MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS == 12 * 60 * 60
