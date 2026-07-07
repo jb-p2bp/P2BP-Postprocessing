@@ -458,6 +458,8 @@ MESH_JOB_OUTPUT_FILENAMES = {
     "previewBin": "merged-point-cloud.preview.bin",
 }
 
+MeshJobOutputKeys = dict[str, str]
+
 
 def write_job_status(
     r2_client: Any,
@@ -600,16 +602,16 @@ def extract_scanproject_zip(archive: Path, destination: Path) -> Path:
 
 def process_generate_job(job: MeshGenerateJob) -> None:
     r2_client = create_r2_client()
-    full_key = _job_output_key(job, MESH_JOB_OUTPUT_FILENAMES["fullLaz"])
-    full_bin_key = _job_output_key(job, MESH_JOB_OUTPUT_FILENAMES["fullBin"])
-    preview_key = _job_output_key(job, MESH_JOB_OUTPUT_FILENAMES["previewLaz"])
-    preview_bin_key = _job_output_key(job, MESH_JOB_OUTPUT_FILENAMES["previewBin"])
+    output_keys: MeshJobOutputKeys = {
+        name: _job_output_key(job, filename)
+        for name, filename in MESH_JOB_OUTPUT_FILENAMES.items()
+    }
 
     started_at = _utc_now_iso()
     write_job_status(r2_client, job, state="running", started_at=started_at)
 
     try:
-        _run_generate_job(r2_client, job, full_key, full_bin_key, preview_key, preview_bin_key)
+        _run_generate_job(r2_client, job, output_keys)
     except BaseException as error:
         # Record the failure for the worker's status reconciliation, then
         # re-raise so the message stays un-acked and gets redelivered. A later
@@ -631,10 +633,7 @@ def process_generate_job(job: MeshGenerateJob) -> None:
 def _run_generate_job(
     r2_client: Any,
     job: MeshGenerateJob,
-    full_key: str,
-    full_bin_key: str,
-    preview_key: str,
-    preview_bin_key: str,
+    output_keys: MeshJobOutputKeys,
 ) -> None:
     with temp_download_dir(f"{job.organizationId}-{job.projectId}") as workspace:
         archives_dir = workspace / "archives"
@@ -685,10 +684,15 @@ def _run_generate_job(
             outputs.point_count,
             preview_points,
         )
-        upload_object(r2_client, full_output, full_key, overwrite=True)
-        upload_object(r2_client, full_bin_output, full_bin_key, overwrite=True)
-        upload_object(r2_client, preview_output, preview_key, overwrite=True)
-        upload_object(r2_client, preview_bin_output, preview_bin_key, overwrite=True)
+        upload_object(r2_client, full_output, output_keys["fullLaz"], overwrite=True)
+        upload_object(r2_client, full_bin_output, output_keys["fullBin"], overwrite=True)
+        upload_object(r2_client, preview_output, output_keys["previewLaz"], overwrite=True)
+        upload_object(
+            r2_client,
+            preview_bin_output,
+            output_keys["previewBin"],
+            overwrite=True,
+        )
 
 
 def process_message(body: Any) -> None:
