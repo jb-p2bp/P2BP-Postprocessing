@@ -307,6 +307,95 @@ def test_process_generate_job_writes_failed_status_and_reraises(
     assert failed_status["completedAt"].endswith("Z")
 
 
+def test_process_generate_job_skips_completed_redelivery(
+    fake_client,
+    monkeypatch,
+):
+    monkeypatch.setenv("R2_BUCKET", "env-bucket")
+    monkeypatch.setattr(pull_queue, "create_r2_client", lambda: fake_client)
+    job_prefix = "organizations/org_123/projects/proj_456/mesh-jobs/job_789"
+    fake_client.put_object(
+        Bucket="env-bucket",
+        Key=f"{job_prefix}/status.json",
+        Body=json.dumps(
+            {
+                "state": "completed",
+                "jobId": "job_789",
+                "startedAt": "2026-07-04T00:00:00Z",
+                "completedAt": "2026-07-04T00:05:00Z",
+                "error": None,
+            }
+        ).encode("utf-8"),
+        ContentType="application/json",
+    )
+    fake_client.put_calls.clear()
+
+    pull_queue.process_message(
+        {
+            "type": "mesh.generate",
+            "version": 2,
+            "jobId": "job_789",
+            "organizationId": "org_123",
+            "projectId": "proj_456",
+            "zoneScanObjectKeys": ["uploads/zone-a.zip"],
+        }
+    )
+
+    assert fake_client.calls == []
+    assert fake_client.upload_calls == []
+    assert fake_client.put_calls == []
+
+
+def test_mesh_job_status_is_completed_rejects_mismatched_job_id(
+    fake_client,
+    monkeypatch,
+):
+    monkeypatch.setenv("R2_BUCKET", "env-bucket")
+    job = pull_queue.parse_mesh_job_message(
+        {
+            "type": "mesh.generate",
+            "version": 2,
+            "jobId": "job_789",
+            "organizationId": "org_123",
+            "projectId": "proj_456",
+            "zoneScanObjectKeys": ["uploads/zone-a.zip"],
+        }
+    )
+    fake_client.put_object(
+        Bucket="env-bucket",
+        Key="organizations/org_123/projects/proj_456/mesh-jobs/job_789/status.json",
+        Body=json.dumps({"state": "completed", "jobId": "other-job"}).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+    assert pull_queue.mesh_job_status_is_completed(fake_client, job) is False
+
+
+def test_mesh_job_status_is_completed_ignores_malformed_status(
+    fake_client,
+    monkeypatch,
+):
+    monkeypatch.setenv("R2_BUCKET", "env-bucket")
+    job = pull_queue.parse_mesh_job_message(
+        {
+            "type": "mesh.generate",
+            "version": 2,
+            "jobId": "job_789",
+            "organizationId": "org_123",
+            "projectId": "proj_456",
+            "zoneScanObjectKeys": ["uploads/zone-a.zip"],
+        }
+    )
+    fake_client.put_object(
+        Bucket="env-bucket",
+        Key="organizations/org_123/projects/proj_456/mesh-jobs/job_789/status.json",
+        Body=b"not json",
+        ContentType="application/json",
+    )
+
+    assert pull_queue.mesh_job_status_is_completed(fake_client, job) is False
+
+
 def test_extract_scanproject_zip_rejects_path_traversal(tmp_path):
     archive = make_zip(tmp_path / "bad.zip", {"../escape.txt": b"nope"})
 

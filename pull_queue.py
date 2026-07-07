@@ -37,6 +37,7 @@ from typing import Any, Literal, NoReturn, Optional
 
 import boto3
 import requests
+from botocore.exceptions import ClientError
 from cloudflare import Cloudflare
 from dotenv import load_dotenv
 
@@ -494,6 +495,38 @@ def write_job_status(
     )
 
 
+def _is_not_found_error(error: ClientError) -> bool:
+    code = error.response.get("Error", {}).get("Code", "")
+    return code in ("404", "NoSuchKey", "NotFound")
+
+
+def mesh_job_status_is_completed(r2_client: Any, job: MeshGenerateJob) -> bool:
+    """Return True when this job's status.json already says completed."""
+
+    try:
+        response = r2_client.get_object(
+            Bucket=default_bucket(),
+            Key=_job_output_key(job, "status.json"),
+        )
+    except ClientError as error:
+        if _is_not_found_error(error):
+            return False
+        raise
+
+    try:
+        status = json.loads(response["Body"].read().decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        return False
+
+    if not isinstance(status, dict):
+        return False
+    if status.get("state") != "completed":
+        return False
+
+    status_job_id = status.get("jobId")
+    return status_job_id in (None, job.jobId)
+
+
 def _public_error_summary(error: BaseException) -> str:
     """Allowlisted public error for status.json: exception class name only.
 
@@ -606,6 +639,13 @@ def process_generate_job(job: MeshGenerateJob) -> None:
         name: _job_output_key(job, filename)
         for name, filename in MESH_JOB_OUTPUT_FILENAMES.items()
     }
+
+    if mesh_job_status_is_completed(r2_client, job):
+        logger.info(
+            "Skipping mesh.generate job %s because status.json is already completed.",
+            job.jobId,
+        )
+        return
 
     started_at = _utc_now_iso()
     write_job_status(r2_client, job, state="running", started_at=started_at)
