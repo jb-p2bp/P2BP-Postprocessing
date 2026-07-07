@@ -33,7 +33,7 @@ import stat
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, NoReturn, Optional
+from typing import Any, Literal, NoReturn, Optional, Protocol
 
 import boto3
 import requests
@@ -470,8 +470,27 @@ MESH_JOB_OUTPUT_FILENAMES = {
 MeshJobOutputKeys = dict[str, str]
 
 
+class MeshJobR2Client(Protocol):
+    def put_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        Body: bytes,
+        ContentType: str | None = None,
+    ) -> object: ...
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]: ...
+
+    def download_file(self, bucket: str, key: str, dest: str) -> object: ...
+
+    def upload_file(self, source: str, bucket: str, key: str) -> object: ...
+
+    def head_object(self, *, Bucket: str, Key: str) -> object: ...
+
+
 def write_job_status(
-    r2_client: Any,
+    r2_client: MeshJobR2Client,
     job: MeshGenerateJob,
     state: MeshJobStatusState,
     started_at: str,
@@ -508,7 +527,9 @@ def _is_not_found_error(error: ClientError) -> bool:
     return code in ("404", "NoSuchKey", "NotFound")
 
 
-def mesh_job_status_is_completed(r2_client: Any, job: MeshGenerateJob) -> bool:
+def mesh_job_status_is_completed(
+    r2_client: MeshJobR2Client, job: MeshGenerateJob
+) -> bool:
     """Return True when this job's status.json already says completed."""
 
     try:
@@ -552,7 +573,7 @@ def _public_error_summary(error: BaseException) -> str:
 
 
 def _write_job_status_failed(
-    r2_client: Any, job: MeshGenerateJob, started_at: str, error: str
+    r2_client: MeshJobR2Client, job: MeshGenerateJob, started_at: str, error: str
 ) -> None:
     """Best-effort failed-status write: never mask the original exception."""
     try:
@@ -679,7 +700,7 @@ def process_generate_job(job: MeshGenerateJob) -> None:
 
 
 def _run_generate_job(
-    r2_client: Any,
+    r2_client: MeshJobR2Client,
     job: MeshGenerateJob,
     output_keys: MeshJobOutputKeys,
 ) -> None:
