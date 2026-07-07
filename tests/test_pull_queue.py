@@ -79,7 +79,10 @@ def test_pull_one_logs_pulled_messages(caplog):
     assert '"projectId": "proj_456"' in caplog.text
 
 
-def test_pull_one_leases_long_enough_to_outlast_a_job():
+def test_pull_one_leases_long_enough_to_outlast_a_job(monkeypatch):
+    monkeypatch.setattr(pull_queue, "MAX_RUNTIME_SECONDS", 60)
+    monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 60_000)
+
     captured: dict[str, object] = {}
 
     def fake_pull(*args, **kwargs):
