@@ -58,7 +58,7 @@ class MeshGenerateJob(_MeshJobBase):
     type: Literal[MESH_GENERATE_TYPE] = MESH_GENERATE_TYPE
     version: Literal[MESH_GENERATE_VERSION] = MESH_GENERATE_VERSION
     jobId: NonEmptyId
-    zoneScanObjectKeys: list[str] = Field(min_length=1)
+    zoneScanObjectKeys: list[NonEmptyId] = Field(min_length=1)
 
 
 class MeshRefineJob(_MeshJobBase):

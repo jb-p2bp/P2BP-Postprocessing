@@ -50,6 +50,15 @@ class TestMeshGenerateJob:
                 zoneScanObjectKeys=[],
             )
 
+    def test_empty_scan_object_key_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MeshGenerateJob(
+                jobId="job",
+                organizationId="org",
+                projectId="proj",
+                zoneScanObjectKeys=["   "],
+            )
+
     def test_missing_scan_keys_rejected(self) -> None:
         with pytest.raises(ValidationError):
             MeshGenerateJob(
