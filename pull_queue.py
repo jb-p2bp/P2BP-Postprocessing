@@ -194,7 +194,7 @@ def _message_body_summary_for_log(message: Any) -> str:
     if not isinstance(body, dict):
         return f"body_type={type(body).__name__}"
 
-    parts = [f"body_type=dict"]
+    parts = ["body_type=dict"]
     if "type" in body:
         parts.append(f"type={body['type']!r}")
     if "version" in body:
