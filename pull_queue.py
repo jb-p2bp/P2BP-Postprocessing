@@ -33,7 +33,7 @@ import stat
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, NoReturn, Optional, Protocol
+from typing import Any, Literal, NoReturn, Optional, Protocol, TypedDict
 
 import boto3
 import requests
@@ -467,7 +467,11 @@ MESH_JOB_OUTPUT_FILENAMES = {
     "pointCloudPreviewBin": "merged-point-cloud.preview.bin",
 }
 
-MeshJobOutputKeys = dict[str, str]
+class MeshJobOutputKeys(TypedDict):
+    pointCloud: str
+    pointCloudBin: str
+    pointCloudPreview: str
+    pointCloudPreviewBin: str
 
 
 class MeshJobR2Client(Protocol):
