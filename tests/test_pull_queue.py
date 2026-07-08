@@ -548,3 +548,4 @@ def test_status_states_match_worker_contract():
     """Pin against `meshJobStatusFileSchema` in
     `p2bp-cf-worker/src/lib/mesh/job-contract.ts`; update both together."""
     assert pull_queue.MESH_JOB_STATUS_STATES == ("running", "completed", "failed")
+    assert pull_queue.MESH_JOB_STATUS_FILENAME == "status.json"

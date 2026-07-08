@@ -465,6 +465,7 @@ MESH_JOB_STATUS_STATES: tuple[MeshJobStatusState, ...] = (
     "completed",
     "failed",
 )
+MESH_JOB_STATUS_FILENAME = "status.json"
 
 MESH_JOB_OUTPUT_FILENAMES = {
     "pointCloud": "merged-point-cloud.laz",
@@ -526,7 +527,7 @@ def write_job_status(
     }
     r2_client.put_object(
         Bucket=default_bucket(),
-        Key=_job_output_key(job, "status.json"),
+        Key=_job_output_key(job, MESH_JOB_STATUS_FILENAME),
         Body=json.dumps(status).encode("utf-8"),
         ContentType="application/json",
     )
@@ -545,7 +546,7 @@ def mesh_job_status_is_completed(
     try:
         response = r2_client.get_object(
             Bucket=default_bucket(),
-            Key=_job_output_key(job, "status.json"),
+            Key=_job_output_key(job, MESH_JOB_STATUS_FILENAME),
         )
     except ClientError as error:
         if _is_not_found_error(error):
