@@ -162,6 +162,49 @@ def test_runtime_contract_rejects_visibility_timeout_above_cloudflare_cap(
         pull_queue.validate_runtime_contract()
 
 
+def test_runtime_contract_rejects_negative_processing_retry_delay(monkeypatch):
+    monkeypatch.setattr(pull_queue, "PROCESSING_RETRY_DELAY_SECONDS", -1)
+
+    with pytest.raises(config.ConfigError, match="PROCESSING_RETRY_DELAY_SECONDS"):
+        pull_queue.validate_runtime_contract()
+
+
+def test_handle_message_retries_processing_failures(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_ack(queue_id, *, account_id, acks, retries):
+        captured.update(
+            {
+                "account_id": account_id,
+                "acks": acks,
+                "queue_id": queue_id,
+                "retries": retries,
+            }
+        )
+
+    client = SimpleNamespace(
+        queues=SimpleNamespace(messages=SimpleNamespace(ack=fake_ack))
+    )
+    message = SimpleNamespace(lease_id="lease_123", body={"type": "bad"})
+
+    def broken_process_message(body):
+        assert body == {"type": "bad"}
+        raise RuntimeError("merge failed")
+
+    monkeypatch.setattr(pull_queue, "process_message", broken_process_message)
+    monkeypatch.setattr(pull_queue, "PROCESSING_RETRY_DELAY_SECONDS", 60)
+
+    with pytest.raises(RuntimeError, match="merge failed"):
+        pull_queue.handle_message(client, "queue_123", "account_123", message)
+
+    assert captured == {
+        "account_id": "account_123",
+        "acks": [],
+        "queue_id": "queue_123",
+        "retries": [{"lease_id": "lease_123", "delay_seconds": 60}],
+    }
+
+
 def test_process_generate_job_downloads_merges_and_uploads_outputs(
     fake_client,
     monkeypatch,

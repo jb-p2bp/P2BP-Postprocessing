@@ -69,6 +69,9 @@ IDLE_LIMIT_SECONDS = int(os.getenv("IDLE_LIMIT_SECONDS", "60"))
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "15"))
 MAX_CONSECUTIVE_FAILURES = int(os.getenv("MAX_CONSECUTIVE_FAILURES", "10"))
 MAX_BACKOFF_SECONDS = int(os.getenv("MAX_BACKOFF_SECONDS", "300"))
+PROCESSING_RETRY_DELAY_SECONDS = int(
+    os.getenv("PROCESSING_RETRY_DELAY_SECONDS", "60")
+)
 # 12h consumer contract. The default process runtime stays lower so a
 # max-runtime job still has time to upload outputs and ack before the queue
 # lease can expire. The Cloudflare worker fails jobs with no terminal status
@@ -149,6 +152,9 @@ def configure_runtime() -> None:
 
 def validate_runtime_contract() -> None:
     """Fail fast when runtime knobs drift from the Worker contract."""
+
+    if PROCESSING_RETRY_DELAY_SECONDS < 0:
+        raise ConfigError("PROCESSING_RETRY_DELAY_SECONDS cannot be negative.")
 
     if MAX_RUNTIME_SECONDS > MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS:
         raise ConfigError(
@@ -806,6 +812,21 @@ def ack_message(
     )
 
 
+def retry_message(
+    client: Cloudflare,
+    queue_id: str,
+    account_id: str,
+    lease_id: str,
+    delay_seconds: int = PROCESSING_RETRY_DELAY_SECONDS,
+) -> None:
+    client.queues.messages.ack(
+        queue_id,
+        account_id=account_id,
+        acks=[],
+        retries=[{"lease_id": lease_id, "delay_seconds": delay_seconds}],
+    )
+
+
 def pull_one(client: Cloudflare, queue_id: str, account_id: str) -> list[Any]:
     """Pull a single message from the queue, returning a (possibly empty) list."""
     pull_response = client.queues.messages.pull(
@@ -825,10 +846,10 @@ def pull_one(client: Cloudflare, queue_id: str, account_id: str) -> list[Any]:
 def handle_message(
     client: Cloudflare, queue_id: str, account_id: str, message: Any
 ) -> None:
-    """Process a single message and ack it only on success.
+    """Process a single message, acking success and retrying failure promptly.
 
     Raises on any failure so the caller can record a processing failure and
-    leave the message un-acked for redelivery.
+    apply its local backoff/shutdown policy.
     """
     body = parse_body(message.body)
     lease_id = getattr(message, "lease_id", None)
@@ -836,8 +857,15 @@ def handle_message(
     if not lease_id:
         raise RuntimeError("Pulled message is missing lease_id")
 
-    # PROCESS (MUST RAISE ON FAILURE)
-    process_message(body)
+    try:
+        process_message(body)
+    except Exception:
+        logger.warning(
+            "Returning failed message to queue for retry in %ds...",
+            PROCESSING_RETRY_DELAY_SECONDS,
+        )
+        retry_message(client, queue_id, account_id, lease_id)
+        raise
 
     # ACK ONLY ON SUCCESS
     logger.info("Acknowledging message...")
