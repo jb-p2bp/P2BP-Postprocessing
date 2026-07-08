@@ -262,7 +262,11 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         return 3
 
     monkeypatch.setattr(pull_queue, "merge_scan_projects", fake_merge_scan_projects)
-    monkeypatch.setattr(pull_queue, "export_merged_cloud_outputs", fake_export_merged_cloud_outputs)
+    monkeypatch.setattr(
+        pull_queue,
+        "export_merged_cloud_outputs",
+        fake_export_merged_cloud_outputs,
+    )
 
     pull_queue.process_message(
         {
@@ -279,7 +283,11 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         (
             "env-bucket",
             "uploads/zone-a.zip",
-            str(Path(captured["inputs"][0]).parent.parent / "archives" / "000-zone-a.zip"),
+            str(
+                Path(captured["inputs"][0]).parent.parent
+                / "archives"
+                / "000-zone-a.zip"
+            ),
         )
     ]
     assert Path(captured["inputs"][0]).name == "000-zone-a.scanproject"

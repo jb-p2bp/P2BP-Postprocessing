@@ -234,7 +234,9 @@ def get_instance_id(max_attempts: int = 3) -> Optional[str]:
         try:
             token_response = requests.put(
                 f"{IMDS_BASE_URL}/latest/api/token",
-                headers={"X-aws-ec2-metadata-token-ttl-seconds": IMDS_TOKEN_TTL_SECONDS},
+                headers={
+                    "X-aws-ec2-metadata-token-ttl-seconds": IMDS_TOKEN_TTL_SECONDS
+                },
                 timeout=IMDS_REQUEST_TIMEOUT_SECONDS,
             )
             token_response.raise_for_status()
@@ -476,6 +478,7 @@ MESH_JOB_OUTPUT_FILENAMES: Mapping[str, str] = MappingProxyType(
         "pointCloudPreviewBin": "merged-point-cloud.preview.bin",
     }
 )
+
 
 class MeshJobOutputKeys(TypedDict):
     pointCloud: str
@@ -747,7 +750,9 @@ def _run_generate_job(
         full_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloud"]
         full_bin_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudBin"]
         preview_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudPreview"]
-        preview_bin_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudPreviewBin"]
+        preview_bin_output = (
+            outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudPreviewBin"]
+        )
 
         logger.info(
             "Merging %d scanproject archive(s) for organization=%s project=%s",
@@ -776,7 +781,12 @@ def _run_generate_job(
             preview_points,
         )
         upload_object(r2_client, full_output, output_keys["pointCloud"], overwrite=True)
-        upload_object(r2_client, full_bin_output, output_keys["pointCloudBin"], overwrite=True)
+        upload_object(
+            r2_client,
+            full_bin_output,
+            output_keys["pointCloudBin"],
+            overwrite=True,
+        )
         upload_object(
             r2_client,
             preview_output,
