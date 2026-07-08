@@ -31,17 +31,26 @@ import subprocess
 import shutil
 import stat
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, NoReturn, Optional
+from types import MappingProxyType
+from typing import Any, Literal, Mapping, NoReturn, Optional, Protocol, TypedDict
 
 import boto3
 import requests
+from botocore.exceptions import ClientError
 from cloudflare import Cloudflare
 from dotenv import load_dotenv
 
 from config import ConfigError, require_env
 from mesh_jobs import MeshGenerateJob, MeshRefineJob, parse_mesh_job_message
-from r2 import create_r2_client, download_object, temp_download_dir, upload_object
+from r2 import (
+    create_r2_client,
+    default_bucket,
+    download_object,
+    temp_download_dir,
+    upload_object,
+)
 from scanproject_merger import export_merged_cloud_outputs, merge_scan_projects
 
 
@@ -61,11 +70,34 @@ IDLE_LIMIT_SECONDS = int(os.getenv("IDLE_LIMIT_SECONDS", "60"))
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "15"))
 MAX_CONSECUTIVE_FAILURES = int(os.getenv("MAX_CONSECUTIVE_FAILURES", "10"))
 MAX_BACKOFF_SECONDS = int(os.getenv("MAX_BACKOFF_SECONDS", "300"))
-MAX_RUNTIME_SECONDS = int(os.getenv("MAX_RUNTIME_SECONDS", "43200"))  # 12h default
+PROCESSING_RETRY_DELAY_SECONDS = int(
+    os.getenv("PROCESSING_RETRY_DELAY_SECONDS", "60")
+)
+# 12h consumer contract. The default process runtime stays lower so a
+# max-runtime job still has time to upload outputs and ack before the queue
+# lease can expire. The Cloudflare worker fails jobs with no terminal status
+# 24h after creation (`meshJobTimeoutMs` in
+# `p2bp-cf-worker/src/routes/api/mesh.jobs.reconciliation.ts`); raising this
+# past ~24h would make legitimately long runs get misreported as timed out.
+MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS = 43_200
+DEFAULT_MAX_RUNTIME_SECONDS = MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS - 10 * 60
+MAX_RUNTIME_SECONDS = int(
+    os.getenv("MAX_RUNTIME_SECONDS", str(DEFAULT_MAX_RUNTIME_SECONDS))
+)
 SHUTDOWN_RETRY_SECONDS = int(os.getenv("SHUTDOWN_RETRY_SECONDS", "30"))
 
-# How long a pulled message stays invisible to other pulls before redelivery.
-VISIBILITY_TIMEOUT_MS = int(os.getenv("VISIBILITY_TIMEOUT_MS", "30000"))
+# How long a pulled message stays invisible before redelivery. It must outlast
+# the longest a single job can hold the lease before it is acked -- messages are
+# acked only after the full merge completes (see handle_message), so a timeout
+# shorter than the run plus output upload/ack buffer lets the lease expire
+# mid-merge, the ack then targets an expired lease, and the message is
+# redelivered and reprocessed (wasted compute, and a long job may never ack).
+CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS = (
+    MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS * 1000
+)
+VISIBILITY_TIMEOUT_MS = int(
+    os.getenv("VISIBILITY_TIMEOUT_MS", str(CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS))
+)
 
 # Output voxel sizes. The full project cloud keeps scanproject_merger's
 # production 2 cm grid by default; the preview writes a coarser 10 cm grid.
@@ -74,6 +106,9 @@ MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL = float(
 )
 PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL = float(
     os.getenv("PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL", "0.10")
+)
+SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES = int(
+    os.getenv("SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES", str(4 * 1024 * 1024 * 1024))
 )
 
 # EC2 Instance Metadata Service (IMDSv2). These are fixed infrastructure facts,
@@ -116,6 +151,38 @@ def configure_runtime() -> None:
     signal.signal(signal.SIGINT, handle_signal)
 
 
+def validate_runtime_contract() -> None:
+    """Fail fast when runtime knobs drift from the Worker contract."""
+
+    if PROCESSING_RETRY_DELAY_SECONDS < 0:
+        raise ConfigError("PROCESSING_RETRY_DELAY_SECONDS cannot be negative.")
+
+    if MAX_RUNTIME_SECONDS > MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS:
+        raise ConfigError(
+            "MAX_RUNTIME_SECONDS cannot exceed "
+            f"{MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS}; update the Worker "
+            "meshJobConsumerRuntimeCapMs contract before raising it."
+        )
+
+    if VISIBILITY_TIMEOUT_MS > CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS:
+        raise ConfigError(
+            "VISIBILITY_TIMEOUT_MS cannot exceed Cloudflare Queues' "
+            f"{CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS}ms maximum."
+        )
+
+    if VISIBILITY_TIMEOUT_MS < MAX_RUNTIME_SECONDS * 1000:
+        raise ConfigError(
+            "VISIBILITY_TIMEOUT_MS must be at least MAX_RUNTIME_SECONDS * 1000 "
+            "so a job can ack before its queue lease expires."
+        )
+
+    if VISIBILITY_TIMEOUT_MS == MAX_RUNTIME_SECONDS * 1000:
+        raise ConfigError(
+            "VISIBILITY_TIMEOUT_MS must leave headroom above MAX_RUNTIME_SECONDS "
+            "for output uploads and message ack."
+        )
+
+
 # =========================
 # HELPERS
 # =========================
@@ -129,11 +196,22 @@ def parse_body(body: Any) -> Any:
     return body
 
 
-def _message_body_for_log(message: Any) -> str:
+def _message_body_summary_for_log(message: Any) -> str:
     body = parse_body(getattr(message, "body", None))
-    if isinstance(body, (dict, list)):
-        return json.dumps(body, sort_keys=True)
-    return repr(body)
+    if not isinstance(body, dict):
+        return f"body_type={type(body).__name__}"
+
+    parts = ["body_type=dict"]
+    if "type" in body:
+        parts.append(f"type={body['type']!r}")
+    if "version" in body:
+        parts.append(f"version={body['version']!r}")
+
+    zone_scan_keys = body.get("zoneScanObjectKeys")
+    if isinstance(zone_scan_keys, list):
+        parts.append(f"zone_scan_key_count={len(zone_scan_keys)}")
+
+    return " ".join(parts)
 
 
 def log_pulled_messages(messages: list[Any]) -> None:
@@ -143,11 +221,11 @@ def log_pulled_messages(messages: list[Any]) -> None:
     logger.info("Pulled %d message(s) from queue.", len(messages))
     for index, message in enumerate(messages, start=1):
         logger.info(
-            "Pulled message %d/%d lease_id=%s body=%s",
+            "Pulled message %d/%d lease_id=%s %s",
             index,
             len(messages),
             getattr(message, "lease_id", None),
-            _message_body_for_log(message),
+            _message_body_summary_for_log(message),
         )
 
 
@@ -156,7 +234,9 @@ def get_instance_id(max_attempts: int = 3) -> Optional[str]:
         try:
             token_response = requests.put(
                 f"{IMDS_BASE_URL}/latest/api/token",
-                headers={"X-aws-ec2-metadata-token-ttl-seconds": IMDS_TOKEN_TTL_SECONDS},
+                headers={
+                    "X-aws-ec2-metadata-token-ttl-seconds": IMDS_TOKEN_TTL_SECONDS
+                },
                 timeout=IMDS_REQUEST_TIMEOUT_SECONDS,
             )
             token_response.raise_for_status()
@@ -354,11 +434,176 @@ class FailureTracker:
         return self._counts.get(stage, 0) >= self._limit
 
 
-def _project_output_key(job: MeshGenerateJob, filename: str) -> str:
+def _job_output_key(job: MeshGenerateJob, filename: str) -> str:
+    """Versioned per-job output key.
+
+    Mirrors `buildMeshJobObjectKey` in
+    `p2bp-cf-worker/src/routes/api/mesh.jobs.keys.ts`; keep the two in sync.
+    """
     return (
         f"organizations/{job.organizationId}/projects/{job.projectId}/"
-        f"{filename}"
+        f"mesh-jobs/{job.jobId}/{filename}"
     )
+
+
+def _utc_now_iso() -> str:
+    """Current UTC time as an ISO-8601 string with a `Z` suffix.
+
+    The worker's status schema (`meshJobStatusFileSchema` in
+    `p2bp-cf-worker/src/lib/mesh/job-contract.ts`) accepts both `Z` and
+    `+HH:MM` offsets; `Z` is kept as the canonical form written here.
+    """
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# The exact states the Cloudflare worker's status schema accepts
+# (`meshJobStatusFileSchema` in `p2bp-cf-worker/src/lib/mesh/job-contract.ts`).
+# Anything else is silently treated as "no evidence" by the worker and would
+# surface 24h later as a bogus timeout, so an unknown state must fail loudly
+# here instead. `Literal` alone is not runtime-enforced, hence the guard in
+# write_job_status.
+MeshJobStatusState = Literal["running", "completed", "failed"]
+MESH_JOB_STATUS_STATES: tuple[MeshJobStatusState, ...] = (
+    "running",
+    "completed",
+    "failed",
+)
+MESH_JOB_STATUS_FILENAME = "status.json"
+
+MESH_JOB_OUTPUT_FILENAMES: Mapping[str, str] = MappingProxyType(
+    {
+        "pointCloud": "merged-point-cloud.laz",
+        "pointCloudBin": "merged-point-cloud.bin",
+        "pointCloudPreview": "merged-point-cloud.preview.laz",
+        "pointCloudPreviewBin": "merged-point-cloud.preview.bin",
+    }
+)
+
+
+class MeshJobOutputKeys(TypedDict):
+    pointCloud: str
+    pointCloudBin: str
+    pointCloudPreview: str
+    pointCloudPreviewBin: str
+
+
+class MeshJobR2Client(Protocol):
+    def put_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        Body: bytes,
+        ContentType: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]: ...
+
+    def download_file(self, bucket: str, key: str, dest: str) -> None: ...
+
+    def upload_file(self, source: str, bucket: str, key: str) -> None: ...
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]: ...
+
+
+def write_job_status(
+    r2_client: MeshJobR2Client,
+    job: MeshGenerateJob,
+    state: MeshJobStatusState,
+    started_at: str,
+    completed_at: Optional[str] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Write the job's `status.json` to R2 (last write wins).
+
+    The Cloudflare worker reconciles the `mesh_jobs` D1 row from this object
+    on read; the schema is pinned in
+    `p2bp-cf-worker/src/lib/mesh/job-contract.ts`. Unknown extra fields are
+    ignored by the worker, so additions here are non-breaking.
+    """
+    if state not in MESH_JOB_STATUS_STATES:
+        raise ValueError(f"invalid mesh job status state: {state!r}")
+
+    status = {
+        "state": state,
+        "jobId": job.jobId,
+        "startedAt": started_at,
+        "completedAt": completed_at,
+        "error": error,
+    }
+    r2_client.put_object(
+        Bucket=default_bucket(),
+        Key=_job_output_key(job, MESH_JOB_STATUS_FILENAME),
+        Body=json.dumps(status).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+
+def _is_not_found_error(error: ClientError) -> bool:
+    code = error.response.get("Error", {}).get("Code", "")
+    return code in ("404", "NoSuchKey", "NotFound")
+
+
+def mesh_job_status_is_completed(
+    r2_client: MeshJobR2Client, job: MeshGenerateJob
+) -> bool:
+    """Return True when this job's status.json already says completed."""
+
+    try:
+        response = r2_client.get_object(
+            Bucket=default_bucket(),
+            Key=_job_output_key(job, MESH_JOB_STATUS_FILENAME),
+        )
+    except ClientError as error:
+        if _is_not_found_error(error):
+            return False
+        raise
+
+    try:
+        status = json.loads(response["Body"].read().decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        return False
+
+    if not isinstance(status, dict):
+        return False
+    if status.get("state") != "completed":
+        return False
+
+    status_job_id = status.get("jobId")
+    return status_job_id in (None, job.jobId)
+
+
+def _public_error_summary(error: BaseException) -> str:
+    """Allowlisted public error for status.json: exception class name only.
+
+    Raw exception text routinely embeds local filesystem paths, bucket
+    endpoints, and R2 object keys, and the Cloudflare worker surfaces
+    status.json's `error` to every project viewer. The full detail is already
+    captured in this worker's own logs (the main loop logs the re-raised
+    exception with logger.exception), so the public record carries only the
+    exception class -- a category, never interpolated message text.
+    """
+    return (
+        f"{type(error).__name__} while processing the mesh job; "
+        f"details are in the consumer logs"
+    )
+
+
+def _write_job_status_failed(
+    r2_client: MeshJobR2Client, job: MeshGenerateJob, started_at: str, error: str
+) -> None:
+    """Best-effort failed-status write: never mask the original exception."""
+    try:
+        write_job_status(
+            r2_client,
+            job,
+            state="failed",
+            started_at=started_at,
+            completed_at=_utc_now_iso(),
+            error=error,
+        )
+    except Exception:
+        logger.exception("Could not write failed job status for %s", job.jobId)
 
 
 def _safe_label(value: str) -> str:
@@ -398,6 +643,13 @@ def extract_scanproject_zip(archive: Path, destination: Path) -> Path:
             members = zip_file.infolist()
             if not members:
                 raise ValueError(f"scanproject archive is empty: {archive}")
+            total_uncompressed_size = sum(member.file_size for member in members)
+            if total_uncompressed_size > SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES:
+                raise ValueError(
+                    f"scanproject archive expands to {total_uncompressed_size} "
+                    "bytes, which exceeds the configured limit of "
+                    f"{SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES} bytes"
+                )
 
             for member in members:
                 target = _zip_member_target(destination, member.filename)
@@ -429,11 +681,54 @@ def extract_scanproject_zip(archive: Path, destination: Path) -> Path:
 
 def process_generate_job(job: MeshGenerateJob) -> None:
     r2_client = create_r2_client()
-    full_key = _project_output_key(job, "merged-point-cloud.laz")
-    full_bin_key = _project_output_key(job, "merged-point-cloud.bin")
-    preview_key = _project_output_key(job, "merged-point-cloud.preview.laz")
-    preview_bin_key = _project_output_key(job, "merged-point-cloud.preview.bin")
+    output_keys: MeshJobOutputKeys = {
+        "pointCloud": _job_output_key(job, MESH_JOB_OUTPUT_FILENAMES["pointCloud"]),
+        "pointCloudBin": _job_output_key(
+            job, MESH_JOB_OUTPUT_FILENAMES["pointCloudBin"]
+        ),
+        "pointCloudPreview": _job_output_key(
+            job, MESH_JOB_OUTPUT_FILENAMES["pointCloudPreview"]
+        ),
+        "pointCloudPreviewBin": _job_output_key(
+            job, MESH_JOB_OUTPUT_FILENAMES["pointCloudPreviewBin"]
+        ),
+    }
 
+    if mesh_job_status_is_completed(r2_client, job):
+        logger.info(
+            "Skipping mesh.generate job %s because status.json is already completed.",
+            job.jobId,
+        )
+        return
+
+    started_at = _utc_now_iso()
+    write_job_status(r2_client, job, state="running", started_at=started_at)
+
+    try:
+        _run_generate_job(r2_client, job, output_keys)
+    except BaseException as error:
+        # Record the failure for the worker's status reconciliation, then
+        # re-raise so the message stays un-acked and gets redelivered. A later
+        # successful redelivery overwrites this with a completed status.
+        _write_job_status_failed(
+            r2_client, job, started_at=started_at, error=_public_error_summary(error)
+        )
+        raise
+
+    write_job_status(
+        r2_client,
+        job,
+        state="completed",
+        started_at=started_at,
+        completed_at=_utc_now_iso(),
+    )
+
+
+def _run_generate_job(
+    r2_client: MeshJobR2Client,
+    job: MeshGenerateJob,
+    output_keys: MeshJobOutputKeys,
+) -> None:
     with temp_download_dir(f"{job.organizationId}-{job.projectId}") as workspace:
         archives_dir = workspace / "archives"
         scanprojects_dir = workspace / "scanprojects"
@@ -452,10 +747,12 @@ def process_generate_job(job: MeshGenerateJob) -> None:
             extract_scanproject_zip(archive, scanproject_dir)
             scanproject_paths.append(scanproject_dir)
 
-        full_output = outputs_dir / "merged-point-cloud.laz"
-        full_bin_output = outputs_dir / "merged-point-cloud.bin"
-        preview_output = outputs_dir / "merged-point-cloud.preview.laz"
-        preview_bin_output = outputs_dir / "merged-point-cloud.preview.bin"
+        full_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloud"]
+        full_bin_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudBin"]
+        preview_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudPreview"]
+        preview_bin_output = (
+            outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudPreviewBin"]
+        )
 
         logger.info(
             "Merging %d scanproject archive(s) for organization=%s project=%s",
@@ -483,10 +780,25 @@ def process_generate_job(job: MeshGenerateJob) -> None:
             outputs.point_count,
             preview_points,
         )
-        upload_object(r2_client, full_output, full_key, overwrite=True)
-        upload_object(r2_client, full_bin_output, full_bin_key, overwrite=True)
-        upload_object(r2_client, preview_output, preview_key, overwrite=True)
-        upload_object(r2_client, preview_bin_output, preview_bin_key, overwrite=True)
+        upload_object(r2_client, full_output, output_keys["pointCloud"], overwrite=True)
+        upload_object(
+            r2_client,
+            full_bin_output,
+            output_keys["pointCloudBin"],
+            overwrite=True,
+        )
+        upload_object(
+            r2_client,
+            preview_output,
+            output_keys["pointCloudPreview"],
+            overwrite=True,
+        )
+        upload_object(
+            r2_client,
+            preview_bin_output,
+            output_keys["pointCloudPreviewBin"],
+            overwrite=True,
+        )
 
 
 def process_message(body: Any) -> None:
@@ -522,6 +834,21 @@ def ack_message(
     )
 
 
+def retry_message(
+    client: Cloudflare,
+    queue_id: str,
+    account_id: str,
+    lease_id: str,
+    delay_seconds: int = PROCESSING_RETRY_DELAY_SECONDS,
+) -> None:
+    client.queues.messages.ack(
+        queue_id,
+        account_id=account_id,
+        acks=[],
+        retries=[{"lease_id": lease_id, "delay_seconds": delay_seconds}],
+    )
+
+
 def pull_one(client: Cloudflare, queue_id: str, account_id: str) -> list[Any]:
     """Pull a single message from the queue, returning a (possibly empty) list."""
     pull_response = client.queues.messages.pull(
@@ -541,10 +868,10 @@ def pull_one(client: Cloudflare, queue_id: str, account_id: str) -> list[Any]:
 def handle_message(
     client: Cloudflare, queue_id: str, account_id: str, message: Any
 ) -> None:
-    """Process a single message and ack it only on success.
+    """Process a single message, acking success and retrying failure promptly.
 
     Raises on any failure so the caller can record a processing failure and
-    leave the message un-acked for redelivery.
+    apply its local backoff/shutdown policy.
     """
     body = parse_body(message.body)
     lease_id = getattr(message, "lease_id", None)
@@ -552,8 +879,15 @@ def handle_message(
     if not lease_id:
         raise RuntimeError("Pulled message is missing lease_id")
 
-    # PROCESS (MUST RAISE ON FAILURE)
-    process_message(body)
+    try:
+        process_message(body)
+    except Exception:
+        logger.warning(
+            "Returning failed message to queue for retry in %ds...",
+            PROCESSING_RETRY_DELAY_SECONDS,
+        )
+        retry_message(client, queue_id, account_id, lease_id)
+        raise
 
     # ACK ONLY ON SUCCESS
     logger.info("Acknowledging message...")
@@ -612,6 +946,7 @@ def main() -> None:
     configure_runtime()
 
     try:
+        validate_runtime_contract()
         account_id = require_env("CLOUDFLARE_ACCOUNT_ID")
         queue_id = require_env("CLOUDFLARE_QUEUE_ID")
         api_token = require_env("CLOUDFLARE_API_TOKEN")

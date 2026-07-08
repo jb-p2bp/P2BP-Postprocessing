@@ -5,7 +5,7 @@ variant: a consumer validates only the exact schema version it was built for
 and rejects any other version, so an incompatible producer fails loudly rather
 than being silently mis-parsed. The discriminated union below mirrors the
 `MeshJobQueueMessage` type defined in
-`p2bp-cf-worker/src/routes/api/mesh.jobs.builder.ts`.
+`p2bp-cf-worker/src/lib/mesh/job-contract.ts`.
 
 Field names are intentionally camelCase to match that JSON wire contract
 exactly. Do not rename them to snake_case -- it would break deserialization
@@ -34,7 +34,7 @@ __all__ = [
 MESH_GENERATE_TYPE = "mesh.generate"
 MESH_REFINE_TYPE = "mesh.refine"
 
-MESH_GENERATE_VERSION = 1
+MESH_GENERATE_VERSION = 2
 MESH_REFINE_VERSION = 1
 
 
@@ -48,11 +48,17 @@ class _MeshJobBase(BaseModel):
 
 
 class MeshGenerateJob(_MeshJobBase):
-    """Mesh generation job: build a mesh from uploaded zone scan archives."""
+    """Mesh generation job: build a mesh from uploaded zone scan archives.
+
+    Version 2 carries the worker-assigned ``jobId``; outputs and the job's
+    ``status.json`` are written under the versioned per-job prefix
+    ``organizations/{organizationId}/projects/{projectId}/mesh-jobs/{jobId}/``.
+    """
 
     type: Literal[MESH_GENERATE_TYPE] = MESH_GENERATE_TYPE
     version: Literal[MESH_GENERATE_VERSION] = MESH_GENERATE_VERSION
-    zoneScanObjectKeys: list[str] = Field(min_length=1)
+    jobId: NonEmptyId
+    zoneScanObjectKeys: list[NonEmptyId] = Field(min_length=1)
 
 
 class MeshRefineJob(_MeshJobBase):
@@ -62,10 +68,13 @@ class MeshRefineJob(_MeshJobBase):
     version: Literal[MESH_REFINE_VERSION] = MESH_REFINE_VERSION
 
 
-# `version` is an exact pin per variant, so a new schema revision is added as a
-# new model in this union (e.g. a MeshGenerateJobV2 with version=2) rather than
-# by editing the existing classes. The discriminator is `type`; if two revisions
-# ever need to share a `type`, switch to a nested (type, version) discriminator.
+# `version` is an exact pin per variant. Because the discriminator is `type`,
+# two revisions of the same message cannot coexist in this union, so a schema
+# revision is a coordinated in-place bump: edit the model, bump its pinned
+# version, and deploy together with the p2bp-cf-worker producer (this is how
+# mesh.generate went v1 -> v2). Old-version messages then fail loudly at
+# validation and dead-letter. If rolling deploys ever require two live
+# revisions of one `type`, switch to a nested (type, version) discriminator.
 MeshJobMessage = Annotated[
     MeshGenerateJob | MeshRefineJob,
     Field(discriminator="type"),

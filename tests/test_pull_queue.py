@@ -5,6 +5,7 @@ The worker is an EC2-hosted long-runner with many external dependencies
 is practical to exercise without standing up the surrounding infrastructure.
 """
 
+import json
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,12 @@ REQUIRED_WORKER_ENV = (
 )
 
 
+def set_valid_runtime_contract(monkeypatch):
+    monkeypatch.setattr(pull_queue, "MAX_RUNTIME_SECONDS", 60)
+    monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 61_000)
+    monkeypatch.setattr(pull_queue, "PROCESSING_RETRY_DELAY_SECONDS", 60)
+
+
 def test_pull_queue_uses_shared_config_helper():
     """The worker must reuse the shared config helpers, not a local duplicate."""
     assert pull_queue.require_env is config.require_env
@@ -37,8 +44,23 @@ def test_main_exits_when_required_config_missing(monkeypatch):
     handlers or reconfigures logging.
     """
     monkeypatch.setattr(pull_queue, "configure_runtime", lambda: None)
+    monkeypatch.setattr(pull_queue, "validate_runtime_contract", lambda: None)
     for var in REQUIRED_WORKER_ENV:
         monkeypatch.delenv(var, raising=False)
+
+    with pytest.raises(SystemExit) as exc:
+        pull_queue.main()
+
+    assert exc.value.code == 1
+
+
+def test_main_exits_when_runtime_contract_invalid(monkeypatch):
+    monkeypatch.setattr(pull_queue, "configure_runtime", lambda: None)
+    monkeypatch.setattr(
+        pull_queue,
+        "validate_runtime_contract",
+        lambda: (_ for _ in ()).throw(config.ConfigError("bad runtime config")),
+    )
 
     with pytest.raises(SystemExit) as exc:
         pull_queue.main()
@@ -61,7 +83,15 @@ def zip_bytes(tmp_path: Path, files: dict[str, bytes]) -> bytes:
 def test_pull_one_logs_pulled_messages(caplog):
     message = SimpleNamespace(
         lease_id="lease_123",
-        body='{"type":"mesh.generate","projectId":"proj_456"}',
+        body=json.dumps(
+            {
+                "type": "mesh.generate",
+                "version": 2,
+                "organizationId": "org_123",
+                "projectId": "proj_456",
+                "zoneScanObjectKeys": ["organizations/org_123/private.zip"],
+            }
+        ),
     )
     response = SimpleNamespace(messages=[message])
     client = SimpleNamespace(
@@ -75,7 +105,128 @@ def test_pull_one_logs_pulled_messages(caplog):
 
     assert "Pulled 1 message(s) from queue." in caplog.text
     assert "lease_id=lease_123" in caplog.text
-    assert '"projectId": "proj_456"' in caplog.text
+    assert "type='mesh.generate'" in caplog.text
+    assert "version=2" in caplog.text
+    assert "zone_scan_key_count=1" in caplog.text
+    assert "proj_456" not in caplog.text
+    assert "organizations/org_123/private.zip" not in caplog.text
+
+
+def test_pull_one_leases_long_enough_to_outlast_a_job(monkeypatch):
+    monkeypatch.setattr(pull_queue, "MAX_RUNTIME_SECONDS", 60)
+    monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 61_000)
+
+    captured: dict[str, object] = {}
+
+    def fake_pull(*args, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(messages=[])
+
+    client = SimpleNamespace(
+        queues=SimpleNamespace(messages=SimpleNamespace(pull=fake_pull))
+    )
+
+    pull_queue.pull_one(client, "queue_123", "account_123")
+
+    # A message is acked only after the full merge completes, so the lease must
+    # outlast the longest a single job can run -- otherwise the ack races an
+    # expired lease and the message is redelivered and reprocessed.
+    assert (
+        captured["visibility_timeout_ms"] >= pull_queue.MAX_RUNTIME_SECONDS * 1000
+    )
+    # ...and stay within Cloudflare Queues' 12h maximum.
+    assert (
+        captured["visibility_timeout_ms"]
+        <= pull_queue.CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS
+    )
+
+
+def test_runtime_contract_rejects_runtime_above_worker_cap(monkeypatch):
+    set_valid_runtime_contract(monkeypatch)
+    monkeypatch.setattr(
+        pull_queue,
+        "MAX_RUNTIME_SECONDS",
+        pull_queue.MESH_JOB_CONSUMER_RUNTIME_CAP_SECONDS + 1,
+    )
+
+    with pytest.raises(config.ConfigError, match="MAX_RUNTIME_SECONDS"):
+        pull_queue.validate_runtime_contract()
+
+
+def test_runtime_contract_rejects_short_visibility_timeout(monkeypatch):
+    set_valid_runtime_contract(monkeypatch)
+    monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 59_999)
+
+    with pytest.raises(config.ConfigError, match="VISIBILITY_TIMEOUT_MS"):
+        pull_queue.validate_runtime_contract()
+
+
+def test_runtime_contract_rejects_visibility_timeout_without_headroom(
+    monkeypatch,
+):
+    set_valid_runtime_contract(monkeypatch)
+    monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 60_000)
+
+    with pytest.raises(config.ConfigError, match="headroom"):
+        pull_queue.validate_runtime_contract()
+
+
+def test_runtime_contract_rejects_visibility_timeout_above_cloudflare_cap(
+    monkeypatch,
+):
+    set_valid_runtime_contract(monkeypatch)
+    monkeypatch.setattr(
+        pull_queue,
+        "VISIBILITY_TIMEOUT_MS",
+        pull_queue.CLOUDFLARE_MAX_VISIBILITY_TIMEOUT_MS + 1,
+    )
+
+    with pytest.raises(config.ConfigError, match="VISIBILITY_TIMEOUT_MS"):
+        pull_queue.validate_runtime_contract()
+
+
+def test_runtime_contract_rejects_negative_processing_retry_delay(monkeypatch):
+    set_valid_runtime_contract(monkeypatch)
+    monkeypatch.setattr(pull_queue, "PROCESSING_RETRY_DELAY_SECONDS", -1)
+
+    with pytest.raises(config.ConfigError, match="PROCESSING_RETRY_DELAY_SECONDS"):
+        pull_queue.validate_runtime_contract()
+
+
+def test_handle_message_retries_processing_failures(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_ack(queue_id, *, account_id, acks, retries):
+        captured.update(
+            {
+                "account_id": account_id,
+                "acks": acks,
+                "queue_id": queue_id,
+                "retries": retries,
+            }
+        )
+
+    client = SimpleNamespace(
+        queues=SimpleNamespace(messages=SimpleNamespace(ack=fake_ack))
+    )
+    message = SimpleNamespace(lease_id="lease_123", body={"type": "bad"})
+
+    def broken_process_message(body):
+        assert body == {"type": "bad"}
+        raise RuntimeError("merge failed")
+
+    monkeypatch.setattr(pull_queue, "process_message", broken_process_message)
+    monkeypatch.setattr(pull_queue, "PROCESSING_RETRY_DELAY_SECONDS", 60)
+
+    with pytest.raises(RuntimeError, match="merge failed"):
+        pull_queue.handle_message(client, "queue_123", "account_123", message)
+
+    assert captured == {
+        "account_id": "account_123",
+        "acks": [],
+        "queue_id": "queue_123",
+        "retries": [{"lease_id": "lease_123", "delay_seconds": 60}],
+    }
 
 
 def test_process_generate_job_downloads_merges_and_uploads_outputs(
@@ -111,12 +262,17 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         return 3
 
     monkeypatch.setattr(pull_queue, "merge_scan_projects", fake_merge_scan_projects)
-    monkeypatch.setattr(pull_queue, "export_merged_cloud_outputs", fake_export_merged_cloud_outputs)
+    monkeypatch.setattr(
+        pull_queue,
+        "export_merged_cloud_outputs",
+        fake_export_merged_cloud_outputs,
+    )
 
     pull_queue.process_message(
         {
             "type": "mesh.generate",
-            "version": 1,
+            "version": 2,
+            "jobId": "job_789",
             "organizationId": "org_123",
             "projectId": "proj_456",
             "zoneScanObjectKeys": ["uploads/zone-a.zip"],
@@ -127,7 +283,11 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         (
             "env-bucket",
             "uploads/zone-a.zip",
-            str(Path(captured["inputs"][0]).parent.parent / "archives" / "000-zone-a.zip"),
+            str(
+                Path(captured["inputs"][0]).parent.parent
+                / "archives"
+                / "000-zone-a.zip"
+            ),
         )
     ]
     assert Path(captured["inputs"][0]).name == "000-zone-a.scanproject"
@@ -145,28 +305,180 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         "minimum_confidence": 0,
         "deduplicate_voxel": pull_queue.PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL,
     }
+    job_prefix = "organizations/org_123/projects/proj_456/mesh-jobs/job_789"
     assert fake_client.upload_calls == [
         (
             str(Path(captured["output"])),
             "env-bucket",
-            "organizations/org_123/projects/proj_456/merged-point-cloud.laz",
+            f"{job_prefix}/merged-point-cloud.laz",
         ),
         (
             str(Path(captured["output"]).with_name("merged-point-cloud.bin")),
             "env-bucket",
-            "organizations/org_123/projects/proj_456/merged-point-cloud.bin",
+            f"{job_prefix}/merged-point-cloud.bin",
         ),
         (
             str(Path(captured["output"]).with_name("merged-point-cloud.preview.laz")),
             "env-bucket",
-            "organizations/org_123/projects/proj_456/merged-point-cloud.preview.laz",
+            f"{job_prefix}/merged-point-cloud.preview.laz",
         ),
         (
             str(Path(captured["output"]).with_name("merged-point-cloud.preview.bin")),
             "env-bucket",
-            "organizations/org_123/projects/proj_456/merged-point-cloud.preview.bin",
+            f"{job_prefix}/merged-point-cloud.preview.bin",
         ),
     ]
+
+    # The worker reconciles job status from these writes: running before any
+    # work, completed after every output has been uploaded.
+    assert [(bucket, key) for bucket, key, _, _ in fake_client.put_calls] == [
+        ("env-bucket", f"{job_prefix}/status.json"),
+        ("env-bucket", f"{job_prefix}/status.json"),
+    ]
+    running_status = json.loads(fake_client.put_calls[0][2])
+    completed_status = json.loads(fake_client.put_calls[1][2])
+    assert running_status["state"] == "running"
+    assert running_status["jobId"] == "job_789"
+    assert running_status["startedAt"].endswith("Z")
+    assert completed_status["state"] == "completed"
+    assert completed_status["startedAt"] == running_status["startedAt"]
+    assert completed_status["completedAt"].endswith("Z")
+    assert completed_status["error"] is None
+    assert fake_client.put_calls[0][3] == "application/json"
+
+
+def test_process_generate_job_writes_failed_status_and_reraises(
+    fake_client,
+    monkeypatch,
+    tmp_path,
+):
+    fake_client.payload = zip_bytes(tmp_path, {"manifest.json": b"{}"})
+    monkeypatch.setenv("R2_BUCKET", "env-bucket")
+    monkeypatch.setattr(pull_queue, "create_r2_client", lambda: fake_client)
+
+    def broken_merge(*args, **kwargs):
+        raise RuntimeError("registration diverged")
+
+    monkeypatch.setattr(pull_queue, "merge_scan_projects", broken_merge)
+
+    with pytest.raises(RuntimeError, match="registration diverged"):
+        pull_queue.process_message(
+            {
+                "type": "mesh.generate",
+                "version": 2,
+                "jobId": "job_789",
+                "organizationId": "org_123",
+                "projectId": "proj_456",
+                "zoneScanObjectKeys": ["uploads/zone-a.zip"],
+            }
+        )
+
+    job_prefix = "organizations/org_123/projects/proj_456/mesh-jobs/job_789"
+    states = [json.loads(body)["state"] for _, key, body, _ in fake_client.put_calls]
+    assert [key for _, key, _, _ in fake_client.put_calls] == [
+        f"{job_prefix}/status.json",
+        f"{job_prefix}/status.json",
+    ]
+    assert states == ["running", "failed"]
+    failed_status = json.loads(fake_client.put_calls[1][2])
+    # The public error is an allowlisted category (exception class only);
+    # raw exception text may embed paths/endpoints and must never leak into
+    # status.json, which the worker surfaces to every project viewer.
+    assert failed_status["error"] == (
+        "RuntimeError while processing the mesh job; "
+        "details are in the consumer logs"
+    )
+    assert "registration diverged" not in failed_status["error"]
+    assert failed_status["completedAt"].endswith("Z")
+
+
+def test_process_generate_job_skips_completed_redelivery(
+    fake_client,
+    monkeypatch,
+):
+    monkeypatch.setenv("R2_BUCKET", "env-bucket")
+    monkeypatch.setattr(pull_queue, "create_r2_client", lambda: fake_client)
+    job_prefix = "organizations/org_123/projects/proj_456/mesh-jobs/job_789"
+    fake_client.put_object(
+        Bucket="env-bucket",
+        Key=f"{job_prefix}/status.json",
+        Body=json.dumps(
+            {
+                "state": "completed",
+                "jobId": "job_789",
+                "startedAt": "2026-07-04T00:00:00Z",
+                "completedAt": "2026-07-04T00:05:00Z",
+                "error": None,
+            }
+        ).encode("utf-8"),
+        ContentType="application/json",
+    )
+    fake_client.put_calls.clear()
+
+    pull_queue.process_message(
+        {
+            "type": "mesh.generate",
+            "version": 2,
+            "jobId": "job_789",
+            "organizationId": "org_123",
+            "projectId": "proj_456",
+            "zoneScanObjectKeys": ["uploads/zone-a.zip"],
+        }
+    )
+
+    assert fake_client.calls == []
+    assert fake_client.upload_calls == []
+    assert fake_client.put_calls == []
+
+
+def test_mesh_job_status_is_completed_rejects_mismatched_job_id(
+    fake_client,
+    monkeypatch,
+):
+    monkeypatch.setenv("R2_BUCKET", "env-bucket")
+    job = pull_queue.parse_mesh_job_message(
+        {
+            "type": "mesh.generate",
+            "version": 2,
+            "jobId": "job_789",
+            "organizationId": "org_123",
+            "projectId": "proj_456",
+            "zoneScanObjectKeys": ["uploads/zone-a.zip"],
+        }
+    )
+    fake_client.put_object(
+        Bucket="env-bucket",
+        Key="organizations/org_123/projects/proj_456/mesh-jobs/job_789/status.json",
+        Body=json.dumps({"state": "completed", "jobId": "other-job"}).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+    assert pull_queue.mesh_job_status_is_completed(fake_client, job) is False
+
+
+def test_mesh_job_status_is_completed_ignores_malformed_status(
+    fake_client,
+    monkeypatch,
+):
+    monkeypatch.setenv("R2_BUCKET", "env-bucket")
+    job = pull_queue.parse_mesh_job_message(
+        {
+            "type": "mesh.generate",
+            "version": 2,
+            "jobId": "job_789",
+            "organizationId": "org_123",
+            "projectId": "proj_456",
+            "zoneScanObjectKeys": ["uploads/zone-a.zip"],
+        }
+    )
+    fake_client.put_object(
+        Bucket="env-bucket",
+        Key="organizations/org_123/projects/proj_456/mesh-jobs/job_789/status.json",
+        Body=b"not json",
+        ContentType="application/json",
+    )
+
+    assert pull_queue.mesh_job_status_is_completed(fake_client, job) is False
 
 
 def test_extract_scanproject_zip_rejects_path_traversal(tmp_path):
@@ -188,6 +500,22 @@ def test_extract_scanproject_zip_requires_root_manifest(tmp_path):
     assert not (tmp_path / "out.scanproject").exists()
 
 
+def test_extract_scanproject_zip_rejects_oversized_expansion(monkeypatch, tmp_path):
+    archive = make_zip(
+        tmp_path / "huge.zip",
+        {
+            "manifest.json": b"{}",
+            "point-cloud.bin": b"x" * 11,
+        },
+    )
+    monkeypatch.setattr(pull_queue, "SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES", 10)
+
+    with pytest.raises(ValueError, match="exceeds the configured limit"):
+        pull_queue.extract_scanproject_zip(archive, tmp_path / "out.scanproject")
+
+    assert not (tmp_path / "out.scanproject").exists()
+
+
 def test_process_message_rejects_refine_jobs():
     with pytest.raises(NotImplementedError):
         pull_queue.process_message(
@@ -198,3 +526,39 @@ def test_process_message_rejects_refine_jobs():
                 "projectId": "proj",
             }
         )
+
+
+def test_write_job_status_rejects_unknown_state(fake_client, monkeypatch):
+    monkeypatch.setenv("R2_BUCKET", "env-bucket")
+    job = pull_queue.parse_mesh_job_message(
+        {
+            "type": "mesh.generate",
+            "version": 2,
+            "jobId": "job_789",
+            "organizationId": "org_123",
+            "projectId": "proj_456",
+            "zoneScanObjectKeys": ["uploads/zone-a.zip"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="invalid mesh job status state"):
+        pull_queue.write_job_status(
+            fake_client,
+            job,
+            state="complete",  # type: ignore[arg-type]
+            started_at="2026-07-04T00:00:00Z",
+        )
+
+    assert fake_client.put_calls == []
+
+
+def test_status_states_match_worker_contract():
+    """Pin against `meshJobStatusFileSchema` in
+    `p2bp-cf-worker/src/lib/mesh/job-contract.ts`; update both together."""
+    assert pull_queue.MESH_JOB_STATUS_STATES == ("running", "completed", "failed")
+    assert pull_queue.MESH_JOB_STATUS_FILENAME == "status.json"
+
+
+def test_output_filename_contract_is_read_only():
+    with pytest.raises(TypeError):
+        pull_queue.MESH_JOB_OUTPUT_FILENAMES["pointCloud"] = "changed.laz"
