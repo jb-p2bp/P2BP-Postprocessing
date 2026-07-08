@@ -922,9 +922,9 @@ def handle_empty_poll(
 
 def main() -> None:
     configure_runtime()
-    validate_runtime_contract()
 
     try:
+        validate_runtime_contract()
         account_id = require_env("CLOUDFLARE_ACCOUNT_ID")
         queue_id = require_env("CLOUDFLARE_QUEUE_ID")
         api_token = require_env("CLOUDFLARE_API_TOKEN")

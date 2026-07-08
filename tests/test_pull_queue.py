@@ -38,8 +38,23 @@ def test_main_exits_when_required_config_missing(monkeypatch):
     handlers or reconfigures logging.
     """
     monkeypatch.setattr(pull_queue, "configure_runtime", lambda: None)
+    monkeypatch.setattr(pull_queue, "validate_runtime_contract", lambda: None)
     for var in REQUIRED_WORKER_ENV:
         monkeypatch.delenv(var, raising=False)
+
+    with pytest.raises(SystemExit) as exc:
+        pull_queue.main()
+
+    assert exc.value.code == 1
+
+
+def test_main_exits_when_runtime_contract_invalid(monkeypatch):
+    monkeypatch.setattr(pull_queue, "configure_runtime", lambda: None)
+    monkeypatch.setattr(
+        pull_queue,
+        "validate_runtime_contract",
+        lambda: (_ for _ in ()).throw(config.ConfigError("bad runtime config")),
+    )
 
     with pytest.raises(SystemExit) as exc:
         pull_queue.main()
