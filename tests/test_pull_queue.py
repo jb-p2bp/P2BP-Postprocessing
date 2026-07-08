@@ -23,6 +23,12 @@ REQUIRED_WORKER_ENV = (
 )
 
 
+def set_valid_runtime_contract(monkeypatch):
+    monkeypatch.setattr(pull_queue, "MAX_RUNTIME_SECONDS", 60)
+    monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 61_000)
+    monkeypatch.setattr(pull_queue, "PROCESSING_RETRY_DELAY_SECONDS", 60)
+
+
 def test_pull_queue_uses_shared_config_helper():
     """The worker must reuse the shared config helpers, not a local duplicate."""
     assert pull_queue.require_env is config.require_env
@@ -136,6 +142,7 @@ def test_pull_one_leases_long_enough_to_outlast_a_job(monkeypatch):
 
 
 def test_runtime_contract_rejects_runtime_above_worker_cap(monkeypatch):
+    set_valid_runtime_contract(monkeypatch)
     monkeypatch.setattr(
         pull_queue,
         "MAX_RUNTIME_SECONDS",
@@ -147,7 +154,7 @@ def test_runtime_contract_rejects_runtime_above_worker_cap(monkeypatch):
 
 
 def test_runtime_contract_rejects_short_visibility_timeout(monkeypatch):
-    monkeypatch.setattr(pull_queue, "MAX_RUNTIME_SECONDS", 60)
+    set_valid_runtime_contract(monkeypatch)
     monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 59_999)
 
     with pytest.raises(config.ConfigError, match="VISIBILITY_TIMEOUT_MS"):
@@ -157,7 +164,7 @@ def test_runtime_contract_rejects_short_visibility_timeout(monkeypatch):
 def test_runtime_contract_rejects_visibility_timeout_without_headroom(
     monkeypatch,
 ):
-    monkeypatch.setattr(pull_queue, "MAX_RUNTIME_SECONDS", 60)
+    set_valid_runtime_contract(monkeypatch)
     monkeypatch.setattr(pull_queue, "VISIBILITY_TIMEOUT_MS", 60_000)
 
     with pytest.raises(config.ConfigError, match="headroom"):
@@ -167,6 +174,7 @@ def test_runtime_contract_rejects_visibility_timeout_without_headroom(
 def test_runtime_contract_rejects_visibility_timeout_above_cloudflare_cap(
     monkeypatch,
 ):
+    set_valid_runtime_contract(monkeypatch)
     monkeypatch.setattr(
         pull_queue,
         "VISIBILITY_TIMEOUT_MS",
@@ -178,6 +186,7 @@ def test_runtime_contract_rejects_visibility_timeout_above_cloudflare_cap(
 
 
 def test_runtime_contract_rejects_negative_processing_retry_delay(monkeypatch):
+    set_valid_runtime_contract(monkeypatch)
     monkeypatch.setattr(pull_queue, "PROCESSING_RETRY_DELAY_SECONDS", -1)
 
     with pytest.raises(config.ConfigError, match="PROCESSING_RETRY_DELAY_SECONDS"):
