@@ -675,8 +675,16 @@ def extract_scanproject_zip(archive: Path, destination: Path) -> Path:
 def process_generate_job(job: MeshGenerateJob) -> None:
     r2_client = create_r2_client()
     output_keys: MeshJobOutputKeys = {
-        name: _job_output_key(job, filename)
-        for name, filename in MESH_JOB_OUTPUT_FILENAMES.items()
+        "pointCloud": _job_output_key(job, MESH_JOB_OUTPUT_FILENAMES["pointCloud"]),
+        "pointCloudBin": _job_output_key(
+            job, MESH_JOB_OUTPUT_FILENAMES["pointCloudBin"]
+        ),
+        "pointCloudPreview": _job_output_key(
+            job, MESH_JOB_OUTPUT_FILENAMES["pointCloudPreview"]
+        ),
+        "pointCloudPreviewBin": _job_output_key(
+            job, MESH_JOB_OUTPUT_FILENAMES["pointCloudPreviewBin"]
+        ),
     }
 
     if mesh_job_status_is_completed(r2_client, job):
