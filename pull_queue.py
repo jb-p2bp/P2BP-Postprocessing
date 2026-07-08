@@ -33,7 +33,8 @@ import stat
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, NoReturn, Optional, Protocol, TypedDict
+from types import MappingProxyType
+from typing import Any, Literal, Mapping, NoReturn, Optional, Protocol, TypedDict
 
 import boto3
 import requests
@@ -467,12 +468,14 @@ MESH_JOB_STATUS_STATES: tuple[MeshJobStatusState, ...] = (
 )
 MESH_JOB_STATUS_FILENAME = "status.json"
 
-MESH_JOB_OUTPUT_FILENAMES = {
-    "pointCloud": "merged-point-cloud.laz",
-    "pointCloudBin": "merged-point-cloud.bin",
-    "pointCloudPreview": "merged-point-cloud.preview.laz",
-    "pointCloudPreviewBin": "merged-point-cloud.preview.bin",
-}
+MESH_JOB_OUTPUT_FILENAMES: Mapping[str, str] = MappingProxyType(
+    {
+        "pointCloud": "merged-point-cloud.laz",
+        "pointCloudBin": "merged-point-cloud.bin",
+        "pointCloudPreview": "merged-point-cloud.preview.laz",
+        "pointCloudPreviewBin": "merged-point-cloud.preview.bin",
+    }
+)
 
 class MeshJobOutputKeys(TypedDict):
     pointCloud: str

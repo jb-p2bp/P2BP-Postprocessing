@@ -549,3 +549,8 @@ def test_status_states_match_worker_contract():
     `p2bp-cf-worker/src/lib/mesh/job-contract.ts`; update both together."""
     assert pull_queue.MESH_JOB_STATUS_STATES == ("running", "completed", "failed")
     assert pull_queue.MESH_JOB_STATUS_FILENAME == "status.json"
+
+
+def test_output_filename_contract_is_read_only():
+    with pytest.raises(TypeError):
+        pull_queue.MESH_JOB_OUTPUT_FILENAMES["pointCloud"] = "changed.laz"
