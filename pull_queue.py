@@ -51,7 +51,7 @@ from r2 import (
     temp_download_dir,
     upload_object,
 )
-from scanproject_merger import export_merged_cloud_outputs, merge_scan_projects
+from scanproject_merger import export_merged_cloud_outputs, export_top_down_view, merge_scan_projects
 
 
 # =========================
@@ -476,6 +476,7 @@ MESH_JOB_OUTPUT_FILENAMES: Mapping[str, str] = MappingProxyType(
         "pointCloudBin": "merged-point-cloud.bin",
         "pointCloudPreview": "merged-point-cloud.preview.laz",
         "pointCloudPreviewBin": "merged-point-cloud.preview.bin",
+        "topDownView": "merged-point-cloud.top-down-view.png",
     }
 )
 
@@ -485,6 +486,7 @@ class MeshJobOutputKeys(TypedDict):
     pointCloudBin: str
     pointCloudPreview: str
     pointCloudPreviewBin: str
+    topDownView: str
 
 
 class MeshJobR2Client(Protocol):
@@ -692,6 +694,7 @@ def process_generate_job(job: MeshGenerateJob) -> None:
         "pointCloudPreviewBin": _job_output_key(
             job, MESH_JOB_OUTPUT_FILENAMES["pointCloudPreviewBin"]
         ),
+        "topDownView": _job_output_key(job, MESH_JOB_OUTPUT_FILENAMES["topDownView"]),
     }
 
     if mesh_job_status_is_completed(r2_client, job):
@@ -753,6 +756,7 @@ def _run_generate_job(
         preview_bin_output = (
             outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudPreviewBin"]
         )
+        top_down_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["topDownView"]
 
         logger.info(
             "Merging %d scanproject archive(s) for organization=%s project=%s",
@@ -774,11 +778,13 @@ def _run_generate_job(
             minimum_confidence=0,
             deduplicate_voxel=PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL,
         )
+        top_down_points = export_top_down_view(full_output, top_down_output)
 
         logger.info(
-            "Uploading merged cloud (%d points) and preview (%d points)",
+            "Uploading merged cloud (%d points), preview (%d points), and top-down view (%d points)",
             outputs.point_count,
             preview_points,
+            top_down_points,
         )
         upload_object(r2_client, full_output, output_keys["pointCloud"], overwrite=True)
         upload_object(
@@ -799,6 +805,7 @@ def _run_generate_job(
             output_keys["pointCloudPreviewBin"],
             overwrite=True,
         )
+        upload_object(r2_client, top_down_output, output_keys["topDownView"], overwrite=True)
 
 
 def process_message(body: Any) -> None:

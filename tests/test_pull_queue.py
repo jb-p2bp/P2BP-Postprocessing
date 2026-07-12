@@ -261,12 +261,19 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         bin_output.write_bytes(b"preview-bin")
         return 3
 
+    def fake_export_top_down_view(source, output):
+        captured["top_down_source"] = source
+        captured["top_down_output"] = output
+        output.write_bytes(b"top-down")
+        return 2
+
     monkeypatch.setattr(pull_queue, "merge_scan_projects", fake_merge_scan_projects)
     monkeypatch.setattr(
         pull_queue,
         "export_merged_cloud_outputs",
         fake_export_merged_cloud_outputs,
     )
+    monkeypatch.setattr(pull_queue, "export_top_down_view", fake_export_top_down_view)
 
     pull_queue.process_message(
         {
@@ -301,6 +308,8 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
     assert captured["bin_output"].name == "merged-point-cloud.bin"
     assert captured["preview_output"].name == "merged-point-cloud.preview.laz"
     assert captured["preview_bin_output"].name == "merged-point-cloud.preview.bin"
+    assert captured["top_down_source"] == captured["output"]
+    assert captured["top_down_output"].name == "merged-point-cloud.top-down-view.png"
     assert captured["preview_kwargs"] == {
         "minimum_confidence": 0,
         "deduplicate_voxel": pull_queue.PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL,
@@ -326,6 +335,11 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
             str(Path(captured["output"]).with_name("merged-point-cloud.preview.bin")),
             "env-bucket",
             f"{job_prefix}/merged-point-cloud.preview.bin",
+        ),
+        (
+            str(Path(captured["output"]).with_name("merged-point-cloud.top-down-view.png")),
+            "env-bucket",
+            f"{job_prefix}/merged-point-cloud.top-down-view.png",
         ),
     ]
 

@@ -349,6 +349,7 @@ class TestContractSnapshot:
             "pointCloudBin": "merged-point-cloud.bin",
             "pointCloudPreview": "merged-point-cloud.preview.laz",
             "pointCloudPreviewBin": "merged-point-cloud.preview.bin",
+            "topDownView": "merged-point-cloud.top-down-view.png",
         }
 
     def test_runtime_cap_matches_worker(self) -> None:

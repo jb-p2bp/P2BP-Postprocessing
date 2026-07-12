@@ -289,6 +289,7 @@ The worker uploads under the versioned per-job prefix
 * `merged-point-cloud.bin`
 * `merged-point-cloud.preview.laz`
 * `merged-point-cloud.preview.bin`
+* `merged-point-cloud.top-down-view.png` (north-up outdoor surface rendering)
 * `status.json` -- job status for the Cloudflare worker's `mesh_jobs`
   reconciliation: written with `state: "running"` before any work,
   `state: "completed"` after every output has been uploaded, and (best
@@ -354,8 +355,8 @@ wrangler queues consumer http add <queue-name>
 
 `scanproject_merger` registers overlapping `.scanproject` zones and writes one merged
 LAS/LAZ point cloud, an optional ScannerConsolidator-compatible BIN companion,
-and a JSON registration report. Source packages are never modified; the first
-input scan anchors the output frame.
+a north-up outdoor top-down PNG, and a JSON registration report. Source packages
+are never modified; the first input scan anchors the output frame.
 
 ```python
 from scanproject_merger import merge_scan_projects

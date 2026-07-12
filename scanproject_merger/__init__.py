@@ -29,6 +29,7 @@ from .format import (
     transform_points,
 )
 from .merge import MergeOutputs, discover, merge_scan_projects
+from .top_down import export_top_down_view
 from .registration import (
     RegistrationEdge,
     RegistrationParams,
@@ -53,6 +54,7 @@ __all__ = [
     "export_merged_cloud_outputs",
     "export_original_scans",
     "export_transformed_scans",
+    "export_top_down_view",
     "merge_scan_projects",
     "register_scans",
     "write_registration_report",
