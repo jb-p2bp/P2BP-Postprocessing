@@ -12,8 +12,19 @@ from types import SimpleNamespace
 import zipfile
 
 import config
+import numpy as np
 import pull_queue
 import pytest
+
+
+def fake_registration_result(identifier="zone-a"):
+    """Just enough RegistrationResult shape for the worker's transform logging."""
+    return SimpleNamespace(
+        scans=[SimpleNamespace(project=SimpleNamespace(identifier=identifier))],
+        correction_transforms=[np.eye(4)],
+        edges=[],
+        rejected_edges=[],
+    )
 
 REQUIRED_WORKER_ENV = (
     "CLOUDFLARE_ACCOUNT_ID",
@@ -248,7 +259,9 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         captured["manifest_exists"] = (Path(inputs[0]) / "manifest.json").is_file()
         output.write_bytes(b"full")
         captured["bin_output"].write_bytes(b"full-bin")
-        return SimpleNamespace(point_count=10, result="REGISTRATION")
+        registration = fake_registration_result()
+        captured["registration"] = registration
+        return SimpleNamespace(point_count=10, result=registration)
 
     def fake_export_merged_cloud_outputs(result, **kwargs):
         captured["preview_result"] = result
@@ -304,7 +317,7 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         "deduplicate_voxel": pull_queue.MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL,
         "export_minimum_confidence": 0,
     }
-    assert captured["preview_result"] == "REGISTRATION"
+    assert captured["preview_result"] is captured["registration"]
     assert captured["bin_output"].name == "merged-point-cloud.bin"
     assert captured["preview_output"].name == "merged-point-cloud.preview.laz"
     assert captured["preview_bin_output"].name == "merged-point-cloud.preview.bin"

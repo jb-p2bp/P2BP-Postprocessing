@@ -21,6 +21,7 @@ Runtime prerequisites:
 """
 
 import json
+import math
 import os
 import sys
 import time
@@ -51,7 +52,13 @@ from r2 import (
     temp_download_dir,
     upload_object,
 )
-from scanproject_merger import export_merged_cloud_outputs, export_top_down_view, merge_scan_projects
+from scanproject_merger import (
+    RegistrationResult,
+    export_merged_cloud_outputs,
+    export_top_down_view,
+    merge_scan_projects,
+)
+from scanproject_merger.registration import parameters as transform_parameters
 
 
 # =========================
@@ -727,6 +734,53 @@ def process_generate_job(job: MeshGenerateJob) -> None:
     )
 
 
+def _log_registration_transforms(result: RegistrationResult) -> None:
+    """Log how registration moved each scan, so alignments are auditable.
+
+    The correction is what registration applied on top of each scan's own
+    georeference (the anchor scan's correction is identity by construction);
+    the full 4x4 matrices are in the workspace's .registration.json, which is
+    discarded with the workspace, so this is the durable record.
+    """
+    logger.info(
+        "Registration corrections for %d scan(s), anchor=%s:",
+        len(result.scans),
+        result.scans[0].project.identifier,
+    )
+    for index, (scan, correction) in enumerate(
+        zip(result.scans, result.correction_transforms)
+    ):
+        yaw, tx, ty, tz = transform_parameters(correction)
+        logger.info(
+            "  scan %03d %s: yaw=%+.3f deg, translation=(%+.3f, %+.3f, %+.3f) m",
+            index,
+            scan.project.identifier,
+            math.degrees(yaw),
+            tx,
+            ty,
+            tz,
+        )
+    for edge in result.edges:
+        logger.info(
+            "  edge %03d->%03d: rmse=%.3f m, overlap=%.2f, correspondences=%d, init=%s",
+            edge.moving,
+            edge.fixed,
+            edge.rmse,
+            edge.overlap_ratio,
+            edge.correspondence_count,
+            edge.initialization,
+        )
+    for rejection in result.rejected_edges:
+        logger.warning(
+            "  edge %03d->%03d rejected (%s): rmse=%.3f m, overlap=%.2f",
+            rejection.edge.moving,
+            rejection.edge.fixed,
+            rejection.reason,
+            rejection.edge.rmse,
+            rejection.edge.overlap_ratio,
+        )
+
+
 def _run_generate_job(
     r2_client: MeshJobR2Client,
     job: MeshGenerateJob,
@@ -771,6 +825,7 @@ def _run_generate_job(
             deduplicate_voxel=MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL,
             export_minimum_confidence=0,
         )
+        _log_registration_transforms(outputs.result)
         preview_points = export_merged_cloud_outputs(
             outputs.result,
             laz_output=preview_output,
