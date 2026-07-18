@@ -5,6 +5,7 @@ import laspy
 import numpy as np
 
 from scanproject_merger import export_top_down_view
+from scanproject_merger.top_down import _skeletonize_mask
 
 
 def write_cloud(path: Path, xyz: np.ndarray, rgb: np.ndarray | None = None, point_format: int = 3) -> None:
@@ -15,6 +16,16 @@ def write_cloud(path: Path, xyz: np.ndarray, rgb: np.ndarray | None = None, poin
     if rgb is not None:
         cloud.red, cloud.green, cloud.blue = (rgb.astype(np.uint16) * 257).T
     cloud.write(path)
+
+
+def test_skeletonize_mask_reduces_wall_band_to_one_centerline():
+    wall_band = np.zeros((40, 40), dtype=np.uint8)
+    wall_band[5:35, 16:25] = 255
+
+    centerline = _skeletonize_mask(wall_band)
+
+    assert np.count_nonzero(centerline[10:30]) == 20
+    assert np.all(np.count_nonzero(centerline[10:30], axis=1) == 1)
 
 
 def test_top_down_view_renders_all_outdoor_surfaces_floor_aligned(tmp_path: Path):

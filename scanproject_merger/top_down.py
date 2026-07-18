@@ -112,6 +112,23 @@ def _odd_kernel(pixels: float, minimum: int = 3) -> int:
     return size if size % 2 else size + 1
 
 
+def _skeletonize_mask(mask: np.ndarray) -> np.ndarray:
+    """Collapse thick detected regions to a single-pixel centerline."""
+    remaining = np.where(mask > 0, 255, 0).astype(np.uint8)
+    skeleton = np.zeros_like(remaining)
+    element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+
+    while cv2.countNonZero(remaining):
+        opened = cv2.morphologyEx(remaining, cv2.MORPH_OPEN, element)
+        skeleton = cv2.bitwise_or(
+            skeleton,
+            cv2.subtract(remaining, opened),
+        )
+        remaining = cv2.erode(remaining, element)
+
+    return skeleton
+
+
 def _enclosed_holes(mask: np.ndarray, maximum_area: float) -> np.ndarray:
     """Return enclosed empty components small enough to be floor gaps."""
     empty = (mask == 0).astype(np.uint8)
@@ -441,10 +458,16 @@ def export_top_down_view(
                 cv2.MORPH_CLOSE,
                 np.ones((wall_kernel, wall_kernel), np.uint8),
             )
-            wall_contours, _ = cv2.findContours(
-                wall_bytes, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            # A wall mask is a narrow band. Drawing its contour traces both
+            # sides of that band and produces two or three parallel outlines.
+            # Reduce the band to its centerline, then widen that centerline only
+            # for visibility so every wall is represented by one solid stroke.
+            wall_centerline = _skeletonize_mask(wall_bytes)
+            wall_stroke = cv2.dilate(
+                wall_centerline,
+                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
             )
-            cv2.drawContours(plan_base, wall_contours, -1, (45, 55, 48), 2, cv2.LINE_AA)
+            plan_base[wall_stroke > 0] = (45, 55, 48)
 
             # High points without a vertically continuous wall below them form
             # canopy/overhang footprints. Close scan-line gaps, discard specks,
