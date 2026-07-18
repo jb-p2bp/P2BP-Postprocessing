@@ -5,7 +5,11 @@ import laspy
 import numpy as np
 
 from scanproject_merger import export_top_down_view
-from scanproject_merger.top_down import _skeletonize_mask
+from scanproject_merger.top_down import (
+    FILLED_FEATURE_GRAY,
+    _skeletonize_mask,
+    _small_enclosed_features,
+)
 
 
 def write_cloud(path: Path, xyz: np.ndarray, rgb: np.ndarray | None = None, point_format: int = 3) -> None:
@@ -26,6 +30,17 @@ def test_skeletonize_mask_reduces_wall_band_to_one_centerline():
 
     assert np.count_nonzero(centerline[10:30]) == 20
     assert np.all(np.count_nonzero(centerline[10:30], axis=1) == 1)
+
+
+def test_small_enclosed_features_fill_objects_but_not_building_interiors():
+    wall_mask = np.zeros((220, 220), dtype=np.uint8)
+    cv2.circle(wall_mask, (35, 35), 15, 255, 3)
+    cv2.rectangle(wall_mask, (80, 20), (205, 180), 255, 3)
+
+    filled = _small_enclosed_features(wall_mask, pixels_per_meter=20)
+
+    assert filled[35, 35] == 255
+    assert filled[100, 140] == 0
 
 
 def test_top_down_view_renders_all_outdoor_surfaces_floor_aligned(tmp_path: Path):
@@ -129,7 +144,18 @@ def test_site_plan_draws_solid_walls_and_dotted_overhead_boundary(tmp_path: Path
             np.full(theta.size, 3.0),
         )
     )
-    xyz = np.vstack((ground, wall, overhead))
+    shrub_theta, shrub_height = np.meshgrid(
+        np.linspace(0, 2 * np.pi, 180),
+        np.linspace(0.2, 1.4, 30),
+    )
+    shrub = np.column_stack(
+        (
+            3.3 + (0.45 * np.cos(shrub_theta)).ravel(),
+            0.8 + (0.45 * np.sin(shrub_theta)).ravel(),
+            shrub_height.ravel(),
+        )
+    )
+    xyz = np.vstack((ground, wall, overhead, shrub))
     source, output = tmp_path / "site.laz", tmp_path / "site-plan.png"
     write_cloud(source, xyz)
 
@@ -143,6 +169,7 @@ def test_site_plan_draws_solid_walls_and_dotted_overhead_boundary(tmp_path: Path
     canopy_region = image[35:90, 70:120]
     assert np.count_nonzero(canopy_region < 120) > 5
     assert np.count_nonzero(canopy_region > 120) > 5
+    assert image[104, 107] == FILLED_FEATURE_GRAY
 
 
 def test_top_down_view_detects_y_up_floor_before_projecting(tmp_path: Path):

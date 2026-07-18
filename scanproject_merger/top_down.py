@@ -23,6 +23,10 @@ WALL_MIN_VERTICAL_SPAN_METERS = 0.75
 FLOOR_GAP_CLOSE_METERS = 0.08
 MAX_FLOOR_REPAIR_AREA_SQUARE_METERS = 1.0
 WALL_GAP_CLOSE_METERS = 0.10
+MIN_FILLED_FEATURE_AREA_SQUARE_METERS = 0.03
+MAX_FILLED_FEATURE_AREA_SQUARE_METERS = 12.0
+MAX_FILLED_FEATURE_SPAN_METERS = 4.0
+FILLED_FEATURE_GRAY = 145
 OVERHEAD_GAP_CLOSE_METERS = 0.35
 MIN_OVERHEAD_FEATURE_METERS = 0.20
 
@@ -148,6 +152,34 @@ def _enclosed_holes(mask: np.ndarray, maximum_area: float) -> np.ndarray:
     accepted = (~touches_edge) & (area <= maximum_area)
     accepted[0] = False
     return (accepted[labels].astype(np.uint8) * 255)
+
+
+def _small_enclosed_features(
+    mask: np.ndarray, pixels_per_meter: float
+) -> np.ndarray:
+    """Fill compact, object-sized footprints while rejecting large structures."""
+    filled = np.zeros_like(mask, dtype=np.uint8)
+    contours, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    minimum_area = max(
+        4.0,
+        pixels_per_meter**2 * MIN_FILLED_FEATURE_AREA_SQUARE_METERS,
+    )
+    maximum_area = max(
+        minimum_area,
+        pixels_per_meter**2 * MAX_FILLED_FEATURE_AREA_SQUARE_METERS,
+    )
+    maximum_span = max(3, int(round(pixels_per_meter * MAX_FILLED_FEATURE_SPAN_METERS)))
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        _, _, width, height = cv2.boundingRect(contour)
+        if (
+            minimum_area <= area <= maximum_area
+            and width <= maximum_span
+            and height <= maximum_span
+        ):
+            cv2.drawContours(filled, [contour], -1, 255, cv2.FILLED)
+    return filled
 
 
 def _normalize_illumination(
@@ -457,6 +489,15 @@ def export_top_down_view(
                 wall_mask.astype(np.uint8) * 255,
                 cv2.MORPH_CLOSE,
                 np.ones((wall_kernel, wall_kernel), np.uint8),
+            )
+            # Fill compact, closed vertical footprints such as shrubs and
+            # planters. The physical area and span limits keep the building
+            # interior open, while the darker gray makes these objects distinct.
+            filled_features = _small_enclosed_features(wall_bytes, scale)
+            plan_base[filled_features > 0] = (
+                FILLED_FEATURE_GRAY,
+                FILLED_FEATURE_GRAY,
+                FILLED_FEATURE_GRAY,
             )
             # A wall mask is a narrow band. Drawing its contour traces both
             # sides of that band and produces two or three parallel outlines.
