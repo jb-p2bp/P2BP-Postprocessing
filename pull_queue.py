@@ -127,6 +127,9 @@ STITCHING_DENSITY_QUANTILE = float(
 STITCHING_TARGET_TRIANGLES = int(
     os.getenv("STITCHING_TARGET_TRIANGLES", "1000000")
 )
+STITCHING_READ_CHUNK_POINTS = int(
+    os.getenv("STITCHING_READ_CHUNK_POINTS", "500000")
+)
 SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES = int(
     os.getenv("SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES", str(4 * 1024 * 1024 * 1024))
 )
@@ -867,6 +870,7 @@ def _run_generate_job(
                 poisson_depth=STITCHING_POISSON_DEPTH,
                 density_quantile=STITCHING_DENSITY_QUANTILE,
                 target_triangles=STITCHING_TARGET_TRIANGLES,
+                read_chunk_points=STITCHING_READ_CHUNK_POINTS,
             ),
         )
 

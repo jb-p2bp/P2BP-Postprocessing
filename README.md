@@ -272,6 +272,12 @@ stitched mesh. Must be in `[0, 1)`. Defaults to `0.02`.
 Optional. Approximate maximum triangle count after decimation. Set to `0` to
 disable decimation. Defaults to `1000000`.
 
+### STITCHING_READ_CHUNK_POINTS
+
+Optional. Maximum number of source points decompressed from LAS/LAZ at once
+before voxel reduction. Lower values reduce peak loading memory at the cost of
+additional processing time. Defaults to `500000`.
+
 ---
 
 # Queue Requirements

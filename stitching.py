@@ -40,6 +40,7 @@ class StitchingParams:
     outlier_std_ratio: float = 2.5
     poisson_scale: float = 1.1
     minimum_component_triangles: int = 100
+    read_chunk_points: int = 500_000
 
     def __post_init__(self) -> None:
         if self.voxel_size <= 0:
@@ -66,6 +67,8 @@ class StitchingParams:
             raise ValueError("poisson_scale must be greater than 1")
         if self.minimum_component_triangles < 0:
             raise ValueError("minimum_component_triangles cannot be negative")
+        if self.read_chunk_points <= 0:
+            raise ValueError("read_chunk_points must be positive")
 
 
 @dataclass(frozen=True)
@@ -94,16 +97,113 @@ def _temporary_sibling(output: Path) -> Path:
     return output.with_suffix(f".{os.getpid()}.tmp{output.suffix}")
 
 
-def _las_colors(cloud: laspy.LasData) -> np.ndarray:
-    dimension_names = set(cloud.point_format.dimension_names)
-    if not {"red", "green", "blue"}.issubset(dimension_names):
-        return np.full((len(cloud.points), 3), 0.7, dtype=np.float64)
+def _point_format_has_colors(point_format: laspy.PointFormat) -> bool:
+    dimensions = set(point_format.dimension_names)
+    return {"red", "green", "blue"}.issubset(dimensions)
 
-    rgb = np.column_stack((cloud.red, cloud.green, cloud.blue)).astype(np.float64)
-    # LAS RGB dimensions are uint16, but some producers store unexpanded 8-bit
-    # values. Detect that convention so those clouds do not render nearly black.
-    divisor = 255.0 if len(rgb) and float(rgb.max()) <= 255 else 65535.0
-    return np.clip(rgb / divisor, 0.0, 1.0)
+
+def _chunk_colors(points: Any, has_colors: bool) -> np.ndarray:
+    if not has_colors:
+        return np.full((len(points), 3), 0.7, dtype=np.float64)
+
+    colors = np.empty((len(points), 3), dtype=np.float64)
+    colors[:, 0] = points.red
+    colors[:, 1] = points.green
+    colors[:, 2] = points.blue
+    return colors
+
+
+def _load_downsampled_cloud(
+    source: Path,
+    params: StitchingParams,
+    o3d: Any,
+) -> tuple[Any, Any, np.ndarray, int]:
+    """Read and voxel-reduce a LAS/LAZ without retaining every source point."""
+
+    input_points = 0
+    maximum_color = 0.0
+    local_points = np.empty((0, 3), dtype=np.float64)
+    retained_colors = np.empty((0, 3), dtype=np.float64)
+    retained_keys = np.empty((0, 3), dtype=np.int64)
+
+    with laspy.open(source) as reader:
+        crs = reader.header.parse_crs()
+        bounds = np.vstack((reader.header.mins, reader.header.maxs)).astype(
+            np.float64
+        )
+        if not np.isfinite(bounds).all():
+            raise ValueError("point cloud header contains non-finite bounds")
+        origin = (bounds[0] + bounds[1]) / 2.0
+        has_colors = _point_format_has_colors(reader.header.point_format)
+
+        for points in reader.chunk_iterator(params.read_chunk_points):
+            xyz = np.empty((len(points), 3), dtype=np.float64)
+            xyz[:, 0] = points.x
+            xyz[:, 1] = points.y
+            xyz[:, 2] = points.z
+            colors = _chunk_colors(points, has_colors)
+
+            finite = np.isfinite(xyz).all(axis=1)
+            if not finite.all():
+                xyz = xyz[finite]
+                colors = colors[finite]
+            input_points += len(xyz)
+            if not len(xyz):
+                continue
+
+            if has_colors:
+                maximum_color = max(maximum_color, float(colors.max()))
+
+            chunk_keys = np.floor(xyz / params.voxel_size).astype(np.int64)
+            _, first = np.unique(chunk_keys, axis=0, return_index=True)
+            first.sort()
+            chunk_points = xyz[first]
+            chunk_points -= origin
+            chunk_colors = colors[first]
+            chunk_keys = chunk_keys[first]
+
+            if len(retained_keys):
+                combined_keys = np.concatenate((retained_keys, chunk_keys))
+                combined_points = np.concatenate((local_points, chunk_points))
+                combined_colors = np.concatenate(
+                    (retained_colors, chunk_colors)
+                )
+                _, first = np.unique(
+                    combined_keys,
+                    axis=0,
+                    return_index=True,
+                )
+                first.sort()
+                retained_keys = combined_keys[first]
+                local_points = combined_points[first]
+                retained_colors = combined_colors[first]
+                del combined_keys, combined_points, combined_colors, first
+            else:
+                retained_keys = chunk_keys
+                local_points = chunk_points
+                retained_colors = chunk_colors
+
+    if input_points < 10:
+        raise ValueError("at least 10 finite points are required for stitching")
+
+    if has_colors:
+        # LAS RGB dimensions are uint16, but some producers store unexpanded
+        # 8-bit values. Scaling after chunk aggregation makes this decision
+        # consistently across the entire file.
+        divisor = 255.0 if maximum_color <= 255 else 65535.0
+        retained_colors = np.clip(
+            retained_colors / divisor,
+            0.0,
+            1.0,
+        )
+
+    del retained_keys
+    point_cloud = o3d.geometry.PointCloud()
+    point_cloud.points = o3d.utility.Vector3dVector(local_points)
+    point_cloud.colors = o3d.utility.Vector3dVector(retained_colors)
+    del local_points, retained_colors
+
+    return point_cloud, crs, origin, input_points
 
 
 def _remove_small_components(mesh: Any, minimum_triangles: int) -> None:
@@ -324,29 +424,12 @@ def stitch_point_cloud(
         else mesh_path.with_name(STITCHED_MESH_METADATA_FILENAME)
     )
 
-    cloud = laspy.read(source)
-    crs = cloud.header.parse_crs()
-    xyz = np.column_stack((cloud.x, cloud.y, cloud.z)).astype(np.float64)
-    colors = _las_colors(cloud)
-    finite = np.isfinite(xyz).all(axis=1)
-    xyz, colors = xyz[finite], colors[finite]
-    input_points = len(xyz)
-    if input_points < 10:
-        raise ValueError("at least 10 finite points are required for stitching")
-
-    minimum = xyz.min(axis=0)
-    maximum = xyz.max(axis=0)
-    origin = (minimum + maximum) / 2.0
-    local_xyz = xyz - origin
-    del cloud, xyz
-
     o3d = _load_open3d()
-    point_cloud = o3d.geometry.PointCloud()
-    point_cloud.points = o3d.utility.Vector3dVector(local_xyz)
-    point_cloud.colors = o3d.utility.Vector3dVector(colors)
-    del local_xyz, colors
-
-    point_cloud = point_cloud.voxel_down_sample(params.voxel_size)
+    point_cloud, crs, origin, input_points = _load_downsampled_cloud(
+        source,
+        params,
+        o3d,
+    )
     if params.outlier_neighbors:
         point_cloud, _ = point_cloud.remove_statistical_outlier(
             nb_neighbors=params.outlier_neighbors,

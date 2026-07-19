@@ -6,7 +6,12 @@ import numpy as np
 from pyproj import CRS
 import pytest
 
-from stitching import StitchingParams, stitch_point_cloud
+from stitching import (
+    StitchingParams,
+    _load_downsampled_cloud,
+    _load_open3d,
+    stitch_point_cloud,
+)
 
 
 @pytest.mark.parametrize(
@@ -18,6 +23,7 @@ from stitching import StitchingParams, stitch_point_cloud
         ("target_triangles", -1, "target_triangles"),
         ("outlier_neighbors", 2, "outlier_neighbors"),
         ("poisson_scale", 1, "poisson_scale"),
+        ("read_chunk_points", 0, "read_chunk_points"),
     ],
 )
 def test_stitching_params_reject_invalid_values(field, value, message):
@@ -72,6 +78,7 @@ def test_stitches_laz_to_local_colored_glb_and_metadata(tmp_path):
             normal_consistency_neighbors=20,
             outlier_neighbors=0,
             minimum_component_triangles=0,
+            read_chunk_points=113,
         ),
     )
 
@@ -97,6 +104,34 @@ def test_stitches_laz_to_local_colored_glb_and_metadata(tmp_path):
     assert payload["stitching"]["method"] == "screened-poisson"
     assert payload["vertexCount"] == result.vertices
     assert payload["triangleCount"] == result.triangles
+
+
+def test_chunked_loading_uses_one_stable_voxel_grid(tmp_path):
+    source = tmp_path / "merged.laz"
+    _write_colored_sphere(source)
+    o3d = _load_open3d()
+
+    small_chunks, _, small_origin, small_count = _load_downsampled_cloud(
+        source,
+        StitchingParams(voxel_size=0.04, read_chunk_points=113),
+        o3d,
+    )
+    one_chunk, _, one_origin, one_count = _load_downsampled_cloud(
+        source,
+        StitchingParams(voxel_size=0.04, read_chunk_points=10_000),
+        o3d,
+    )
+
+    assert small_count == one_count == 1200
+    np.testing.assert_allclose(small_origin, one_origin)
+    np.testing.assert_allclose(
+        np.asarray(small_chunks.points),
+        np.asarray(one_chunk.points),
+    )
+    np.testing.assert_allclose(
+        np.asarray(small_chunks.colors),
+        np.asarray(one_chunk.colors),
+    )
 
 
 def test_stitching_requires_glb_output(tmp_path):
