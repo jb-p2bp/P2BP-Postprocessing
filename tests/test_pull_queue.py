@@ -274,11 +274,31 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         bin_output.write_bytes(b"preview-bin")
         return 3
 
+    def fake_stitch_point_cloud(input_cloud, output_mesh, **kwargs):
+        captured["stitch_input"] = input_cloud
+        captured["stitch_output"] = output_mesh
+        captured["stitch_metadata_output"] = kwargs.pop("metadata_output")
+        captured["stitch_params"] = kwargs.pop("params")
+        assert kwargs == {}
+        output_mesh.write_bytes(b"glTF-mesh")
+        captured["stitch_metadata_output"].write_bytes(b"{}")
+        return SimpleNamespace(
+            mesh=output_mesh,
+            metadata=captured["stitch_metadata_output"],
+            vertices=20,
+            triangles=30,
+        )
+
     monkeypatch.setattr(pull_queue, "merge_scan_projects", fake_merge_scan_projects)
     monkeypatch.setattr(
         pull_queue,
         "export_merged_cloud_outputs",
         fake_export_merged_cloud_outputs,
+    )
+    monkeypatch.setattr(
+        pull_queue,
+        "stitch_point_cloud",
+        fake_stitch_point_cloud,
     )
 
     pull_queue.process_message(
@@ -318,6 +338,18 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         "minimum_confidence": 0,
         "deduplicate_voxel": pull_queue.PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL,
     }
+    assert captured["stitch_input"] == captured["output"]
+    assert Path(captured["stitch_output"]).name == "stitched-mesh.glb"
+    assert (
+        Path(captured["stitch_metadata_output"]).name
+        == "stitched-mesh.metadata.json"
+    )
+    assert captured["stitch_params"] == pull_queue.StitchingParams(
+        voxel_size=pull_queue.STITCHING_VOXEL_SIZE,
+        poisson_depth=pull_queue.STITCHING_POISSON_DEPTH,
+        density_quantile=pull_queue.STITCHING_DENSITY_QUANTILE,
+        target_triangles=pull_queue.STITCHING_TARGET_TRIANGLES,
+    )
     job_prefix = "organizations/org_123/projects/proj_456/mesh-jobs/job_789"
     assert fake_client.upload_calls == [
         (
@@ -339,6 +371,20 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
             str(Path(captured["output"]).with_name("merged-point-cloud.preview.bin")),
             "env-bucket",
             f"{job_prefix}/merged-point-cloud.preview.bin",
+        ),
+        (
+            str(Path(captured["output"]).with_name("stitched-mesh.glb")),
+            "env-bucket",
+            f"{job_prefix}/stitched-mesh.glb",
+        ),
+        (
+            str(
+                Path(captured["output"]).with_name(
+                    "stitched-mesh.metadata.json"
+                )
+            ),
+            "env-bucket",
+            f"{job_prefix}/stitched-mesh.metadata.json",
         ),
     ]
 
