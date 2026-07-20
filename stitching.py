@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import json
+import math
+from numbers import Integral, Real
 import os
 from pathlib import Path
 import struct
@@ -44,6 +46,35 @@ class StitchingParams:
     maximum_stitching_points: int = 1_000_000
 
     def __post_init__(self) -> None:
+        finite_fields = {
+            "voxel_size": self.voxel_size,
+            "density_quantile": self.density_quantile,
+            "normal_radius_multiplier": self.normal_radius_multiplier,
+            "outlier_std_ratio": self.outlier_std_ratio,
+            "poisson_scale": self.poisson_scale,
+        }
+        for name, value in finite_fields.items():
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, Real)
+                or not math.isfinite(float(value))
+            ):
+                raise ValueError(f"{name} must be a finite number")
+
+        integer_fields = {
+            "poisson_depth": self.poisson_depth,
+            "target_triangles": self.target_triangles,
+            "normal_max_neighbors": self.normal_max_neighbors,
+            "normal_consistency_neighbors": self.normal_consistency_neighbors,
+            "outlier_neighbors": self.outlier_neighbors,
+            "minimum_component_triangles": self.minimum_component_triangles,
+            "read_chunk_points": self.read_chunk_points,
+            "maximum_stitching_points": self.maximum_stitching_points,
+        }
+        for name, value in integer_fields.items():
+            if isinstance(value, bool) or not isinstance(value, Integral):
+                raise ValueError(f"{name} must be an integer")
+
         if self.voxel_size <= 0:
             raise ValueError("voxel_size must be positive")
         if not 3 <= self.poisson_depth <= 14:

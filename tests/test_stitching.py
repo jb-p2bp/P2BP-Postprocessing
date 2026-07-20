@@ -25,6 +25,18 @@ from stitching import (
         ("poisson_scale", 1, "poisson_scale"),
         ("read_chunk_points", 0, "read_chunk_points"),
         ("maximum_stitching_points", 9, "maximum_stitching_points"),
+        ("voxel_size", float("nan"), "voxel_size"),
+        ("density_quantile", float("nan"), "density_quantile"),
+        (
+            "normal_radius_multiplier",
+            float("inf"),
+            "normal_radius_multiplier",
+        ),
+        ("outlier_std_ratio", float("-inf"), "outlier_std_ratio"),
+        ("poisson_scale", float("nan"), "poisson_scale"),
+        ("poisson_depth", 9.5, "poisson_depth"),
+        ("target_triangles", True, "target_triangles"),
+        ("read_chunk_points", 100.5, "read_chunk_points"),
     ],
 )
 def test_stitching_params_reject_invalid_values(field, value, message):
