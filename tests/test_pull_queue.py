@@ -620,6 +620,20 @@ def test_status_states_match_worker_contract():
     assert pull_queue.MESH_JOB_STATUS_FILENAME == "status.json"
 
 
+def test_worker_stitching_defaults_match_library_defaults():
+    defaults = pull_queue.DEFAULT_STITCHING_PARAMS
+
+    assert pull_queue.STITCHING_VOXEL_SIZE == defaults.voxel_size
+    assert pull_queue.STITCHING_POISSON_DEPTH == defaults.poisson_depth
+    assert pull_queue.STITCHING_DENSITY_QUANTILE == defaults.density_quantile
+    assert pull_queue.STITCHING_TARGET_TRIANGLES == defaults.target_triangles
+    assert pull_queue.STITCHING_READ_CHUNK_POINTS == defaults.read_chunk_points
+    assert (
+        pull_queue.STITCHING_MAXIMUM_POINTS
+        == defaults.maximum_stitching_points
+    )
+
+
 def test_output_filename_contract_is_read_only():
     with pytest.raises(TypeError):
         pull_queue.MESH_JOB_OUTPUT_FILENAMES["pointCloud"] = "changed.laz"

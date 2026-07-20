@@ -105,6 +105,9 @@ class StitchingParams:
             raise ValueError("maximum_stitching_points must be at least 10")
 
 
+DEFAULT_STITCHING_PARAMS = StitchingParams()
+
+
 @dataclass(frozen=True)
 class StitchingResult:
     mesh: Path
@@ -450,7 +453,7 @@ def stitch_point_cloud(
     output_mesh: str | Path,
     *,
     metadata_output: str | Path | None = None,
-    params: StitchingParams = StitchingParams(),
+    params: StitchingParams = DEFAULT_STITCHING_PARAMS,
 ) -> StitchingResult:
     """Stitch a merged LAS/LAZ cloud into a colored, local-coordinate GLB.
 

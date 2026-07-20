@@ -59,6 +59,7 @@ from scanproject_merger import (
 )
 from scanproject_merger.registration import parameters as transform_parameters
 from stitching import (
+    DEFAULT_STITCHING_PARAMS,
     STITCHED_MESH_FILENAME,
     STITCHED_MESH_METADATA_FILENAME,
     StitchingParams,
@@ -119,19 +120,38 @@ MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL = float(
 PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL = float(
     os.getenv("PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL", "0.10")
 )
-STITCHING_VOXEL_SIZE = float(os.getenv("STITCHING_VOXEL_SIZE", "0.05"))
-STITCHING_POISSON_DEPTH = int(os.getenv("STITCHING_POISSON_DEPTH", "9"))
+STITCHING_VOXEL_SIZE = float(
+    os.getenv("STITCHING_VOXEL_SIZE", str(DEFAULT_STITCHING_PARAMS.voxel_size))
+)
+STITCHING_POISSON_DEPTH = int(
+    os.getenv(
+        "STITCHING_POISSON_DEPTH",
+        str(DEFAULT_STITCHING_PARAMS.poisson_depth),
+    )
+)
 STITCHING_DENSITY_QUANTILE = float(
-    os.getenv("STITCHING_DENSITY_QUANTILE", "0.02")
+    os.getenv(
+        "STITCHING_DENSITY_QUANTILE",
+        str(DEFAULT_STITCHING_PARAMS.density_quantile),
+    )
 )
 STITCHING_TARGET_TRIANGLES = int(
-    os.getenv("STITCHING_TARGET_TRIANGLES", "1000000")
+    os.getenv(
+        "STITCHING_TARGET_TRIANGLES",
+        str(DEFAULT_STITCHING_PARAMS.target_triangles),
+    )
 )
 STITCHING_READ_CHUNK_POINTS = int(
-    os.getenv("STITCHING_READ_CHUNK_POINTS", "500000")
+    os.getenv(
+        "STITCHING_READ_CHUNK_POINTS",
+        str(DEFAULT_STITCHING_PARAMS.read_chunk_points),
+    )
 )
 STITCHING_MAXIMUM_POINTS = int(
-    os.getenv("STITCHING_MAXIMUM_POINTS", "1000000")
+    os.getenv(
+        "STITCHING_MAXIMUM_POINTS",
+        str(DEFAULT_STITCHING_PARAMS.maximum_stitching_points),
+    )
 )
 SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES = int(
     os.getenv("SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES", str(4 * 1024 * 1024 * 1024))
