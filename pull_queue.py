@@ -58,6 +58,12 @@ from scanproject_merger import (
     merge_scan_projects,
 )
 from scanproject_merger.registration import parameters as transform_parameters
+from stitching import (
+    STITCHED_MESH_FILENAME,
+    STITCHED_MESH_METADATA_FILENAME,
+    StitchingParams,
+    stitch_point_cloud,
+)
 
 
 # =========================
@@ -112,6 +118,17 @@ MERGED_POINT_CLOUD_DEDUPLICATE_VOXEL = float(
 )
 PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL = float(
     os.getenv("PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL", "0.10")
+)
+STITCHING_VOXEL_SIZE = float(os.getenv("STITCHING_VOXEL_SIZE", "0.05"))
+STITCHING_POISSON_DEPTH = int(os.getenv("STITCHING_POISSON_DEPTH", "9"))
+STITCHING_DENSITY_QUANTILE = float(
+    os.getenv("STITCHING_DENSITY_QUANTILE", "0.02")
+)
+STITCHING_TARGET_TRIANGLES = int(
+    os.getenv("STITCHING_TARGET_TRIANGLES", "1000000")
+)
+STITCHING_READ_CHUNK_POINTS = int(
+    os.getenv("STITCHING_READ_CHUNK_POINTS", "500000")
 )
 SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES = int(
     os.getenv("SCANPROJECT_ZIP_MAX_UNCOMPRESSED_BYTES", str(4 * 1024 * 1024 * 1024))
@@ -806,6 +823,10 @@ def _run_generate_job(
         preview_bin_output = (
             outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudPreviewBin"]
         )
+        stitched_mesh_output = outputs_dir / STITCHED_MESH_FILENAME
+        stitched_mesh_metadata_output = (
+            outputs_dir / STITCHED_MESH_METADATA_FILENAME
+        )
 
         logger.info(
             "Merging %d scanproject archive(s) for organization=%s project=%s",
@@ -828,11 +849,38 @@ def _run_generate_job(
             minimum_confidence=0,
             deduplicate_voxel=PREVIEW_POINT_CLOUD_DEDUPLICATE_VOXEL,
         )
+        full_point_count = outputs.point_count
+        # Registration retains every source point. Release it before Open3D
+        # loads the merged LAZ so stitching does not hold both representations.
+        del outputs
 
         logger.info(
-            "Uploading merged cloud (%d points) and preview (%d points)",
-            outputs.point_count,
+            "Stitching merged cloud with voxel=%.3f m, Poisson depth=%d, "
+            "target triangles=%d",
+            STITCHING_VOXEL_SIZE,
+            STITCHING_POISSON_DEPTH,
+            STITCHING_TARGET_TRIANGLES,
+        )
+        stitched = stitch_point_cloud(
+            full_output,
+            stitched_mesh_output,
+            metadata_output=stitched_mesh_metadata_output,
+            params=StitchingParams(
+                voxel_size=STITCHING_VOXEL_SIZE,
+                poisson_depth=STITCHING_POISSON_DEPTH,
+                density_quantile=STITCHING_DENSITY_QUANTILE,
+                target_triangles=STITCHING_TARGET_TRIANGLES,
+                read_chunk_points=STITCHING_READ_CHUNK_POINTS,
+            ),
+        )
+
+        logger.info(
+            "Uploading merged cloud (%d points), preview (%d points), and "
+            "stitched mesh (%d vertices, %d triangles)",
+            full_point_count,
             preview_points,
+            stitched.vertices,
+            stitched.triangles,
         )
         upload_object(r2_client, full_output, output_keys["pointCloud"], overwrite=True)
         upload_object(
@@ -851,6 +899,18 @@ def _run_generate_job(
             r2_client,
             preview_bin_output,
             output_keys["pointCloudPreviewBin"],
+            overwrite=True,
+        )
+        upload_object(
+            r2_client,
+            stitched.mesh,
+            _job_output_key(job, STITCHED_MESH_FILENAME),
+            overwrite=True,
+        )
+        upload_object(
+            r2_client,
+            stitched.metadata,
+            _job_output_key(job, STITCHED_MESH_METADATA_FILENAME),
             overwrite=True,
         )
 

@@ -11,6 +11,7 @@ At the current stage of development, the instance can:
 * Validate `MESH_JOBS` messages
 * Download zipped `.scanproject` archives from R2
 * Merge zone scans into project LAZ and BIN outputs
+* Stitch each merged point cloud into a colored GLB surface mesh
 * Acknowledge messages after successful processing
 
 This repository serves as the foundation for point cloud postprocessing and meshing functionality.
@@ -25,6 +26,7 @@ This repository serves as the foundation for point cloud postprocessing and mesh
 ├── mesh_jobs.py               # pydantic models for MESH_JOBS queue messages
 ├── pull_queue.py
 ├── r2.py
+├── stitching.py               # Open3D surface stitching
 ├── scanproject_merger/        # point cloud registration & merging library
 │   ├── __init__.py
 │   ├── format.py
@@ -50,7 +52,8 @@ Responsibilities:
 * Pull messages from the configured queue
 * Validate and dispatch mesh job messages
 * Stage zipped scanproject archives from R2
-* Upload merged project point-cloud outputs
+* Stitch the merged point cloud into a surface mesh
+* Upload merged point-cloud and stitched-mesh outputs
 * Acknowledge messages only after successful processing
 
 ### r2.py
@@ -94,6 +97,24 @@ importable library (no command-line interface). See
 
 The queue worker calls this library for `mesh.generate` jobs after extracting the
 zipped `.scanproject` archives from R2.
+
+### stitching.py
+
+Open3D Screened Poisson stitching for merged LAS/LAZ point clouds. The input is
+voxel-downsampled, filtered, assigned consistent normals, reconstructed into a
+colored triangle mesh, density-trimmed, and decimated to a configurable triangle
+budget. The GLB uses coordinates centered near zero for rendering precision;
+`stitched-mesh.metadata.json` records the removed projected origin and CRS.
+
+```python
+from stitching import stitch_point_cloud
+
+result = stitch_point_cloud(
+    "outdoors.laz",
+    "stitched-mesh.glb",
+)
+print(result.vertices, result.triangles)
+```
 
 ### pyproject.toml
 
@@ -231,6 +252,32 @@ Optional. Output voxel size, in meters, for the canonical
 Optional. Output voxel size, in meters, for the downsampled
 `merged-point-cloud.preview.laz` and `merged-point-cloud.preview.bin`. Defaults to `0.10`.
 
+### STITCHING_VOXEL_SIZE
+
+Optional. Voxel size, in meters, used to downsample the merged point cloud before
+stitching. Defaults to `0.05`.
+
+### STITCHING_POISSON_DEPTH
+
+Optional. Open3D Screened Poisson octree depth. Higher values retain more detail
+and require more memory and processing time. Defaults to `9`.
+
+### STITCHING_DENSITY_QUANTILE
+
+Optional. Fraction of the lowest-support Poisson vertices removed from the
+stitched mesh. Must be in `[0, 1)`. Defaults to `0.02`.
+
+### STITCHING_TARGET_TRIANGLES
+
+Optional. Approximate maximum triangle count after decimation. Set to `0` to
+disable decimation. Defaults to `1000000`.
+
+### STITCHING_READ_CHUNK_POINTS
+
+Optional. Maximum number of source points decompressed from LAS/LAZ at once
+before voxel reduction. Lower values reduce peak loading memory at the cost of
+additional processing time. Defaults to `500000`.
+
 ---
 
 # Queue Requirements
@@ -275,7 +322,8 @@ When a `mesh.generate` message exists:
 Processing message with body type: dict
 Downloading r2://<bucket>/<zone-scan-object-key> -> <workspace>/archives/000-zone.zip
 Merging 1 scanproject archive(s) for organization=org_test project=proj_test
-Uploading merged cloud (...) and preview (...)
+Stitching merged cloud with voxel=0.050 m, Poisson depth=9, target triangles=1000000
+Uploading merged cloud (...), preview (...), and stitched mesh (...)
 
 Acknowledging message...
 
@@ -289,6 +337,8 @@ The worker uploads under the versioned per-job prefix
 * `merged-point-cloud.bin`
 * `merged-point-cloud.preview.laz`
 * `merged-point-cloud.preview.bin`
+* `stitched-mesh.glb`
+* `stitched-mesh.metadata.json` -- CRS, local origin, counts, and stitching parameters
 * `status.json` -- job status for the Cloudflare worker's `mesh_jobs`
   reconciliation: written with `state: "running"` before any work,
   `state: "completed"` after every output has been uploaded, and (best
@@ -385,5 +435,4 @@ downloading and extracting the R2 scan archives.
 
 Planned additions include:
 
-* Point cloud meshing (consuming the `scanproject_merger` registration output)
 * Mesh refinement job processing
