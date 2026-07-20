@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import struct
 
 import laspy
 import numpy as np
@@ -102,7 +103,19 @@ def test_stitches_laz_to_local_colored_glb_and_metadata(tmp_path):
     assert result.vertices > 0
     assert result.triangles > 0
     assert result.epsg == 32617
-    assert mesh.read_bytes()[:4] == b"glTF"
+    glb = mesh.read_bytes()
+    assert glb[:4] == b"glTF"
+    json_length, chunk_type = struct.unpack_from("<I4s", glb, 12)
+    assert chunk_type == b"JSON"
+    gltf = json.loads(glb[20 : 20 + json_length].decode("utf-8"))
+    primitive = gltf["meshes"][0]["primitives"][0]
+    accessors = gltf["accessors"]
+    assert accessors[primitive["indices"]]["componentType"] == 5125
+    assert accessors[primitive["attributes"]["POSITION"]]["type"] == "VEC3"
+    assert accessors[primitive["attributes"]["NORMAL"]]["type"] == "VEC3"
+    color_accessor = accessors[primitive["attributes"]["COLOR_0"]]
+    assert color_accessor["componentType"] == 5121
+    assert color_accessor["normalized"] is True
     import open3d as o3d
 
     reloaded = o3d.io.read_triangle_mesh(str(mesh), enable_post_processing=True)

@@ -269,29 +269,78 @@ def _write_mesh_atomic(mesh: Any, output: Path) -> None:
 
         binary = bytearray()
         buffer_views: list[dict[str, Any]] = []
+        accessors: list[dict[str, Any]] = []
 
-        def append_view(data: bytes, *, target: int) -> int:
+        def append_accessor(
+            data: np.ndarray,
+            *,
+            target: int,
+            component_type: int,
+            accessor_type: str,
+            include_bounds: bool = False,
+            normalized: bool = False,
+        ) -> int:
             while len(binary) % 4:
                 binary.append(0)
             offset = len(binary)
-            binary.extend(data)
+            payload = data.tobytes()
+            binary.extend(payload)
             view = {
                 "buffer": 0,
                 "byteOffset": offset,
-                "byteLength": len(data),
+                "byteLength": len(payload),
                 "target": target,
             }
             buffer_views.append(view)
-            return len(buffer_views) - 1
+            accessor: dict[str, Any] = {
+                "bufferView": len(buffer_views) - 1,
+                "componentType": component_type,
+                "count": len(data),
+                "type": accessor_type,
+            }
+            if include_bounds:
+                minimum = np.asarray(data.min(axis=0)).reshape(-1)
+                maximum = np.asarray(data.max(axis=0)).reshape(-1)
+                accessor["min"] = minimum.astype(float).tolist()
+                accessor["max"] = maximum.astype(float).tolist()
+                if np.issubdtype(data.dtype, np.integer):
+                    accessor["min"] = minimum.astype(int).tolist()
+                    accessor["max"] = maximum.astype(int).tolist()
+            if normalized:
+                accessor["normalized"] = True
+            accessors.append(accessor)
+            return len(accessors) - 1
 
-        index_view = append_view(indices.tobytes(), target=34963)
-        position_view = append_view(positions.tobytes(), target=34962)
-        normal_view = append_view(normals.tobytes(), target=34962)
-        color_view = append_view(colors.tobytes(), target=34962)
+        index_accessor = append_accessor(
+            indices,
+            target=34963,
+            component_type=5125,
+            accessor_type="SCALAR",
+            include_bounds=True,
+        )
+        position_accessor = append_accessor(
+            positions,
+            target=34962,
+            component_type=5126,
+            accessor_type="VEC3",
+            include_bounds=True,
+        )
+        normal_accessor = append_accessor(
+            normals,
+            target=34962,
+            component_type=5126,
+            accessor_type="VEC3",
+        )
+        color_accessor = append_accessor(
+            colors,
+            target=34962,
+            component_type=5121,
+            accessor_type="VEC3",
+            normalized=True,
+        )
         while len(binary) % 4:
             binary.append(0)
 
-        vertex_count = len(positions)
         gltf = {
             "asset": {
                 "version": "2.0",
@@ -312,11 +361,11 @@ def _write_mesh_atomic(mesh: Any, output: Path) -> None:
                     "primitives": [
                         {
                             "attributes": {
-                                "POSITION": 1,
-                                "NORMAL": 2,
-                                "COLOR_0": 3,
+                                "POSITION": position_accessor,
+                                "NORMAL": normal_accessor,
+                                "COLOR_0": color_accessor,
                             },
-                            "indices": 0,
+                            "indices": index_accessor,
                             "material": 0,
                             "mode": 4,
                         }
@@ -335,37 +384,7 @@ def _write_mesh_atomic(mesh: Any, output: Path) -> None:
             ],
             "buffers": [{"byteLength": len(binary)}],
             "bufferViews": buffer_views,
-            "accessors": [
-                {
-                    "bufferView": index_view,
-                    "componentType": 5125,
-                    "count": len(indices),
-                    "type": "SCALAR",
-                    "min": [int(indices.min())],
-                    "max": [int(indices.max())],
-                },
-                {
-                    "bufferView": position_view,
-                    "componentType": 5126,
-                    "count": vertex_count,
-                    "type": "VEC3",
-                    "min": positions.min(axis=0).astype(float).tolist(),
-                    "max": positions.max(axis=0).astype(float).tolist(),
-                },
-                {
-                    "bufferView": normal_view,
-                    "componentType": 5126,
-                    "count": vertex_count,
-                    "type": "VEC3",
-                },
-                {
-                    "bufferView": color_view,
-                    "componentType": 5121,
-                    "count": vertex_count,
-                    "type": "VEC3",
-                    "normalized": True,
-                },
-            ],
+            "accessors": accessors,
         }
         json_chunk = json.dumps(
             gltf,
