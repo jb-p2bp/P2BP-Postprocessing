@@ -41,6 +41,7 @@ class StitchingParams:
     poisson_scale: float = 1.1
     minimum_component_triangles: int = 100
     read_chunk_points: int = 500_000
+    maximum_stitching_points: int = 1_000_000
 
     def __post_init__(self) -> None:
         if self.voxel_size <= 0:
@@ -69,6 +70,8 @@ class StitchingParams:
             raise ValueError("minimum_component_triangles cannot be negative")
         if self.read_chunk_points <= 0:
             raise ValueError("read_chunk_points must be positive")
+        if self.maximum_stitching_points < 10:
+            raise ValueError("maximum_stitching_points must be at least 10")
 
 
 @dataclass(frozen=True)
@@ -122,9 +125,9 @@ def _load_downsampled_cloud(
 
     input_points = 0
     maximum_color = 0.0
-    local_points = np.empty((0, 3), dtype=np.float64)
-    retained_colors = np.empty((0, 3), dtype=np.float64)
-    retained_keys = np.empty((0, 3), dtype=np.int64)
+    point_chunks: list[np.ndarray] = []
+    color_chunks: list[np.ndarray] = []
+    retained_keys: set[tuple[int, int, int]] = set()
 
     with laspy.open(source) as reader:
         crs = reader.header.parse_crs()
@@ -157,31 +160,25 @@ def _load_downsampled_cloud(
             chunk_keys = np.floor(xyz / params.voxel_size).astype(np.int64)
             _, first = np.unique(chunk_keys, axis=0, return_index=True)
             first.sort()
-            chunk_points = xyz[first]
-            chunk_points -= origin
-            chunk_colors = colors[first]
             chunk_keys = chunk_keys[first]
+            retained = []
+            for index, values in enumerate(chunk_keys):
+                key = (int(values[0]), int(values[1]), int(values[2]))
+                if key in retained_keys:
+                    continue
+                retained_keys.add(key)
+                if len(retained_keys) > params.maximum_stitching_points:
+                    raise ValueError(
+                        "voxel downsampling retained more than "
+                        f"{params.maximum_stitching_points} points; increase "
+                        "voxel_size or maximum_stitching_points"
+                    )
+                retained.append(first[index])
 
-            if len(retained_keys):
-                combined_keys = np.concatenate((retained_keys, chunk_keys))
-                combined_points = np.concatenate((local_points, chunk_points))
-                combined_colors = np.concatenate(
-                    (retained_colors, chunk_colors)
-                )
-                _, first = np.unique(
-                    combined_keys,
-                    axis=0,
-                    return_index=True,
-                )
-                first.sort()
-                retained_keys = combined_keys[first]
-                local_points = combined_points[first]
-                retained_colors = combined_colors[first]
-                del combined_keys, combined_points, combined_colors, first
-            else:
-                retained_keys = chunk_keys
-                local_points = chunk_points
-                retained_colors = chunk_colors
+            if retained:
+                retained_indices = np.asarray(retained, dtype=np.intp)
+                point_chunks.append(xyz[retained_indices] - origin)
+                color_chunks.append(colors[retained_indices])
 
     if input_points < 10:
         raise ValueError("at least 10 finite points are required for stitching")
@@ -191,13 +188,12 @@ def _load_downsampled_cloud(
         # 8-bit values. Scaling after chunk aggregation makes this decision
         # consistently across the entire file.
         divisor = 255.0 if maximum_color <= 255 else 65535.0
-        retained_colors = np.clip(
-            retained_colors / divisor,
-            0.0,
-            1.0,
-        )
+    local_points = np.concatenate(point_chunks)
+    retained_colors = np.concatenate(color_chunks)
+    if has_colors:
+        retained_colors = np.clip(retained_colors / divisor, 0.0, 1.0)
 
-    del retained_keys
+    del retained_keys, point_chunks, color_chunks
     point_cloud = o3d.geometry.PointCloud()
     point_cloud.points = o3d.utility.Vector3dVector(local_points)
     point_cloud.colors = o3d.utility.Vector3dVector(retained_colors)

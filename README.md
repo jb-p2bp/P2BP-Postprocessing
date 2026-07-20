@@ -278,6 +278,13 @@ Optional. Maximum number of source points decompressed from LAS/LAZ at once
 before voxel reduction. Lower values reduce peak loading memory at the cost of
 additional processing time. Defaults to `500000`.
 
+### STITCHING_MAXIMUM_POINTS
+
+Optional. Maximum number of voxel-downsampled points retained for surface
+reconstruction. Jobs exceeding this limit fail before Open3D reconstruction;
+increase `STITCHING_VOXEL_SIZE` to reduce the retained point count. Defaults to
+`1000000`.
+
 ---
 
 # Queue Requirements

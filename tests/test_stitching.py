@@ -24,6 +24,7 @@ from stitching import (
         ("outlier_neighbors", 2, "outlier_neighbors"),
         ("poisson_scale", 1, "poisson_scale"),
         ("read_chunk_points", 0, "read_chunk_points"),
+        ("maximum_stitching_points", 9, "maximum_stitching_points"),
     ],
 )
 def test_stitching_params_reject_invalid_values(field, value, message):
@@ -132,6 +133,23 @@ def test_chunked_loading_uses_one_stable_voxel_grid(tmp_path):
         np.asarray(small_chunks.colors),
         np.asarray(one_chunk.colors),
     )
+
+
+def test_chunked_loading_enforces_stitching_point_limit(tmp_path):
+    source = tmp_path / "merged.laz"
+    _write_colored_sphere(source, point_count=100)
+    o3d = _load_open3d()
+
+    with pytest.raises(ValueError, match="retained more than 10 points"):
+        _load_downsampled_cloud(
+            source,
+            StitchingParams(
+                voxel_size=0.001,
+                read_chunk_points=7,
+                maximum_stitching_points=10,
+            ),
+            o3d,
+        )
 
 
 def test_stitching_requires_glb_output(tmp_path):

@@ -350,6 +350,7 @@ def test_process_generate_job_downloads_merges_and_uploads_outputs(
         density_quantile=pull_queue.STITCHING_DENSITY_QUANTILE,
         target_triangles=pull_queue.STITCHING_TARGET_TRIANGLES,
         read_chunk_points=pull_queue.STITCHING_READ_CHUNK_POINTS,
+        maximum_stitching_points=pull_queue.STITCHING_MAXIMUM_POINTS,
     )
     job_prefix = "organizations/org_123/projects/proj_456/mesh-jobs/job_789"
     assert fake_client.upload_calls == [
