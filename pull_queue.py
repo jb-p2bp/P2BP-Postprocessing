@@ -502,6 +502,8 @@ MESH_JOB_OUTPUT_FILENAMES: Mapping[str, str] = MappingProxyType(
         "pointCloudBin": "merged-point-cloud.bin",
         "pointCloudPreview": "merged-point-cloud.preview.laz",
         "pointCloudPreviewBin": "merged-point-cloud.preview.bin",
+        "stitchedMesh": STITCHED_MESH_FILENAME,
+        "stitchedMeshMetadata": STITCHED_MESH_METADATA_FILENAME,
     }
 )
 
@@ -511,6 +513,8 @@ class MeshJobOutputKeys(TypedDict):
     pointCloudBin: str
     pointCloudPreview: str
     pointCloudPreviewBin: str
+    stitchedMesh: str
+    stitchedMeshMetadata: str
 
 
 class MeshJobR2Client(Protocol):
@@ -718,6 +722,12 @@ def process_generate_job(job: MeshGenerateJob) -> None:
         "pointCloudPreviewBin": _job_output_key(
             job, MESH_JOB_OUTPUT_FILENAMES["pointCloudPreviewBin"]
         ),
+        "stitchedMesh": _job_output_key(
+            job, MESH_JOB_OUTPUT_FILENAMES["stitchedMesh"]
+        ),
+        "stitchedMeshMetadata": _job_output_key(
+            job, MESH_JOB_OUTPUT_FILENAMES["stitchedMeshMetadata"]
+        ),
     }
 
     if mesh_job_status_is_completed(r2_client, job):
@@ -826,9 +836,9 @@ def _run_generate_job(
         preview_bin_output = (
             outputs_dir / MESH_JOB_OUTPUT_FILENAMES["pointCloudPreviewBin"]
         )
-        stitched_mesh_output = outputs_dir / STITCHED_MESH_FILENAME
+        stitched_mesh_output = outputs_dir / MESH_JOB_OUTPUT_FILENAMES["stitchedMesh"]
         stitched_mesh_metadata_output = (
-            outputs_dir / STITCHED_MESH_METADATA_FILENAME
+            outputs_dir / MESH_JOB_OUTPUT_FILENAMES["stitchedMeshMetadata"]
         )
 
         logger.info(
@@ -908,13 +918,13 @@ def _run_generate_job(
         upload_object(
             r2_client,
             stitched.mesh,
-            _job_output_key(job, STITCHED_MESH_FILENAME),
+            output_keys["stitchedMesh"],
             overwrite=True,
         )
         upload_object(
             r2_client,
             stitched.metadata,
-            _job_output_key(job, STITCHED_MESH_METADATA_FILENAME),
+            output_keys["stitchedMeshMetadata"],
             overwrite=True,
         )
 

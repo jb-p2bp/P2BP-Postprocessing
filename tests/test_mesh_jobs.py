@@ -349,6 +349,8 @@ class TestContractSnapshot:
             "pointCloudBin": "merged-point-cloud.bin",
             "pointCloudPreview": "merged-point-cloud.preview.laz",
             "pointCloudPreviewBin": "merged-point-cloud.preview.bin",
+            "stitchedMesh": "stitched-mesh.glb",
+            "stitchedMeshMetadata": "stitched-mesh.metadata.json",
         }
 
     def test_runtime_cap_matches_worker(self) -> None:
